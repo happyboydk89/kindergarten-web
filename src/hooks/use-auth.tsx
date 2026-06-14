@@ -50,10 +50,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (phoneNumber: string, password: string): Promise<AuthUser> => {
       const res = await authService.login(phoneNumber, password);
-      if (res.success && res.data) {
-        setUser(res.data.user);
-        setRoleCookie(res.data.user.role);
-        return res.data.user;
+      if (res.success) {
+        const meRes = await authService.getMe();
+        if (meRes.success && meRes.data) {
+          setUser(meRes.data.user);
+          setRoleCookie(meRes.data.user.role);
+          return meRes.data.user;
+        }
+        throw new Error('Không thể lấy thông tin người dùng sau đăng nhập');
       }
       throw new Error(res.message ?? 'Đăng nhập thất bại');
     },
