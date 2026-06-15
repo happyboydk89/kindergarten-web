@@ -8,7 +8,7 @@ import {
   useCallback,
   type ReactNode,
 } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { authService } from '@/services/auth.service';
 import type { AuthUser } from '@/services/auth.service';
 import type { UserRole } from '@/types';
@@ -29,8 +29,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
+    if (pathname === '/login') {
+      setIsLoading(false);
+      return;
+    }
+
     authService
       .getMe()
       .then((res) => {
@@ -45,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         setIsLoading(false);
       });
-  }, []);
+  }, [pathname]);
 
   const login = useCallback(
     async (phoneNumber: string, password: string): Promise<AuthUser> => {

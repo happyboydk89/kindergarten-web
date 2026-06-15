@@ -73,16 +73,16 @@ apiClient.interceptors.response.use(
           .catch((refreshError) => {
             isRefreshing = false;
             processQueue(refreshError);
-            if (typeof window !== 'undefined') {
-              window.location.href = '/login';
+            if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+              window.location.href = '/login?expired=1';
             }
           });
       });
     }
 
     if (status === 401 && code === 'UNAUTHORIZED') {
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.href = '/login?expired=1';
       }
       return Promise.reject(error.response?.data);
     }

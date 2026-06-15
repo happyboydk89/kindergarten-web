@@ -22,7 +22,7 @@ export function middleware(request: NextRequest) {
   }
 
   if (AUTH_ROUTES.some((r) => pathname.startsWith(r))) {
-    if (accessToken) {
+    if (accessToken && !request.nextUrl.searchParams.has('expired')) {
       const homePath = getRoleHomePath(userRole);
       return NextResponse.redirect(new URL(homePath, request.url));
     }
