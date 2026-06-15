@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Menu, PanelLeftClose, PanelLeft, Sun, Moon, KeyRound, LogOut, User } from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeft, KeyRound, LogOut, User } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { authService } from '@/services/auth.service';
@@ -36,18 +36,11 @@ interface NavbarProps {
 
 export function Navbar({ collapsed, onToggleCollapse, onMobileMenuOpen }: NavbarProps) {
   const { user, logout } = useAuth();
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [changePwOpen, setChangePwOpen] = useState(false);
   const [changingPw, setChangingPw] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-
-  const toggleTheme = () => {
-    const next = theme === 'light' ? 'dark' : 'light';
-    setTheme(next);
-    document.documentElement.classList.toggle('dark', next === 'dark');
-  };
 
   const handleChangePassword = async () => {
     if (newPassword !== confirmPassword) {
@@ -98,10 +91,6 @@ export function Navbar({ collapsed, onToggleCollapse, onMobileMenuOpen }: Navbar
         </Button>
 
         <Breadcrumb className="flex-1" />
-
-        <Button variant="ghost" size="icon" onClick={toggleTheme}>
-          {theme === 'light' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

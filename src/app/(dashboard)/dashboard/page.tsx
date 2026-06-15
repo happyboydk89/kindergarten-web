@@ -2,395 +2,274 @@
 
 /**
  * =====================================================================================
- * DASHBOARD CHÍNH — TRANG TỔNG QUAN DÀNH CHO HIỆU TRƯỞNG (PRINCIPAL)
+ * TRANG TỔNG QUAN — /dashboard
  * =====================================================================================
  *
- * Kiến trúc dữ liệu & luồng hoạt động:
+ * Trang mặc định sau khi đăng nhập. Cung cấp cái nhìn tổng quan về cơ sở đang chọn:
+ *   - 4 Stats Cards (Tổng HS, Tổng lớp, Tổng GV, Doanh thu học phí ước tính)
+ *   - Danh sách shortcut nhanh tới các module con (Lớp học, Học sinh, ...)
  *
- *   1. HEADER + CAMPUS SWITCHER
- *      - Khi mount: gọi `campusService.list()` (GET /api/v1/campuses) để lấy danh sách
- *        toàn bộ cơ sở. Mặc định chọn campus đầu tiên trong mảng (lưu vào state
- *        `selectedCampusId`).
- *      - Nếu mảng rỗng → hiển thị Empty State kèm CTA mở Dialog "Thêm cơ sở mới".
- *      - Khi user chọn campus khác trong Select, các Stats Cards và Tabs sẽ tự
- *        động cập nhật theo `campusId` (hiện tại Stats là mock — sẽ nối API thật
- *        ở bước sau).
+ * Mọi logic chi tiết của từng phân hệ đã được tách sang các route riêng:
+ *   /dashboard/classes    — Lớp học
+ *   /dashboard/students   — Học sinh
+ *   /dashboard/teachers   — Giáo viên
+ *   /dashboard/attendance — Điểm danh
+ *   /dashboard/menu       — Thực đơn
+ *   /dashboard/meal-fees  — Tiền ăn
+ *   /dashboard/invoices   — Hóa đơn
+ *   /dashboard/expenses   — Nhật ký chi tiêu
  *
- *   2. DIALOG "THÊM CƠ SỞ MỚI"
- *      - Mở bằng nút "Thêm cơ sở" ở góc trên bên phải Header.
- *      - Form gồm 2 trường: Tên cơ sở, Địa chỉ (validate với Zod).
- *      - Submit gọi `campusService.create({ name, address })` → POST /api/v1/campuses.
- *      - Thành công: append campus mới vào `campuses[]` + auto-select campus vừa tạo.
- *      - Nút Submit có `disabled={isSubmitting}` ngay khi click để chống double-click.
- *
- *   3. STATS CARDS (4 thẻ)
- *      - Tổng học sinh, Tổng lớp học, Tổng giáo viên, Doanh thu học phí ước tính.
- *      - Tiền tệ format bằng `formatVND()` (locale vi-VN).
- *
- *   4. TABS ĐIỀU HƯỚNG CHỨC NĂNG (6 phân hệ)
- *      - Tổng quan, Học sinh, Điểm danh, Thực đơn, Học phí, Báo cáo.
- *      - Mỗi Tab hiện tại là layout trống (placeholder) kèm tiêu đề + nút bấm
- *        chức năng tương ứng — sẽ được fill logic ở các commit sau.
- *
- * Quy tắc cứng (đã tuân thủ):
- *   - Mọi request dùng `apiClient` (đã cấu hình `withCredentials: true` + baseURL
- *     tương đối `/api/v1` qua Next.js rewrite proxy).
- *   - Luôn check `response.data?.success` trước khi dùng `data`.
- *   - Nút Submit có loading + `disabled` ngay khi click.
+ * User điều hướng qua Sidebar bên trái. Header (chứa Campus Switcher) được render
+ * chung bởi (dashboard)/layout.tsx.
  * =====================================================================================
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { toast } from 'sonner';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import {
   Building2,
   GraduationCap,
-  Loader2,
-  Plus,
-  Wallet,
-  LayoutDashboard,
-  UserCog,
-  ClipboardCheck,
-  UtensilsCrossed,
-  FileBarChart,
   School,
-  BookOpen,
+  UserCog,
+  UtensilsCrossed,
+  Wallet,
+  ClipboardCheck,
+  Receipt,
+  Banknote,
+  ArrowRight,
+  Loader2,
 } from 'lucide-react';
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-
-import { useAuth } from '@/hooks/use-auth';
-import { campusService, type Campus, type CreateCampusPayload } from '@/services/campus.service';
 import { cn, formatVND } from '@/lib/utils';
-import { ClassesTab } from './_components/classes-tab';
-import { StudentsTab } from './_components/students-tab';
-import { TeachersTab } from './_components/teachers-tab';
-import { MenuTab } from './_components/menu-tab';
-import { MealFeeTab } from './_components/meal-fee-tab';
-import { ExpenseInvoiceTab } from './_components/expense-invoice-tab';
+import { useAuth } from '@/hooks/use-auth';
+import { useSelectedCampus } from '@/components/shared/dashboard-header';
+import { studentService } from '@/services/student.service';
+import { classService } from '@/services/class.service';
+import { teacherService } from '@/services/teacher.service';
 
-// ---------- Schema validate Dialog "Thêm cơ sở mới" ----------
-const createCampusSchema = z.object({
-  name: z.string().min(2, 'Tên cơ sở phải có ít nhất 2 ký tự').max(100, 'Tên cơ sở quá dài'),
-  address: z.string().min(5, 'Địa chỉ phải có ít nhất 5 ký tự').max(200, 'Địa chỉ quá dài'),
-});
-type CreateCampusFormValues = z.infer<typeof createCampusSchema>;
-
-// ---------- Kiểu dữ liệu hiển thị của Stats Card ----------
+// ---------- Kiểu dữ liệu Stats Card ----------
 interface StatsCardData {
   label: string;
-  value: number;
+  value: number | null;
   icon: React.ReactNode;
-  suffix?: string; // ví dụ "₫"
   tone: 'indigo' | 'emerald' | 'amber' | 'sky';
+  isCurrency?: boolean;
 }
 
-// ---------- Cấu hình các Tab còn lại (chỉ còn 2 tab placeholder) ----------
-interface FunctionalTab {
-  value: string;
-  label: string;
-  icon: React.ReactNode;
+// ---------- Shortcut items (link sang các route con) ----------
+interface ShortcutItem {
+  title: string;
   description: string;
-  primaryAction: { label: string; icon: React.ReactNode };
+  href: string;
+  icon: React.ReactNode;
+  tone: 'indigo' | 'emerald' | 'amber' | 'sky' | 'rose' | 'violet';
 }
 
-/**
- * Danh sách placeholder cho 2 Tab chưa làm: Tổng quan, Điểm danh.
- * 6 tab còn lại (Lớp học, Học sinh, Giáo viên, Thực đơn, Học phí/Tiền ăn,
- * Nhật ký chi tiêu & Hóa đơn) đã có component riêng trong `_components/`,
- * sẽ được render thẳng vào <TabsContent> tương ứng trong DashboardPage.
- */
-const PLACEHOLDER_TABS: FunctionalTab[] = [
+const SHORTCUTS: ShortcutItem[] = [
   {
-    value: 'overview',
-    label: 'Tổng quan',
-    icon: <LayoutDashboard className="h-4 w-4" />,
-    description:
-      'Bảng điều khiển tổng hợp số liệu vận hành của cơ sở đang chọn: học sinh, lớp, giáo viên, doanh thu học phí và các chỉ số nhanh khác.',
-    primaryAction: { label: 'Xem chi tiết', icon: <LayoutDashboard className="h-4 w-4" /> },
+    title: 'Lớp học',
+    description: 'Quản lý lớp + bảng học phí theo khối',
+    href: '/dashboard/classes',
+    icon: <School className="h-5 w-5" />,
+    tone: 'emerald',
   },
   {
-    value: 'attendance',
-    label: 'Điểm danh',
-    icon: <ClipboardCheck className="h-4 w-4" />,
-    description:
-      'Theo dõi điểm danh hằng ngày của từng lớp, hỗ trợ đánh dấu nghỉ có phép / không phép và ghi chú của giáo viên.',
-    primaryAction: { label: 'Mở bảng điểm danh', icon: <ClipboardCheck className="h-4 w-4" /> },
+    title: 'Học sinh',
+    description: 'Danh sách + tiếp nhận học sinh mới',
+    href: '/dashboard/students',
+    icon: <GraduationCap className="h-5 w-5" />,
+    tone: 'indigo',
+  },
+  {
+    title: 'Giáo viên',
+    description: 'Danh sách + phân công đứng lớp',
+    href: '/dashboard/teachers',
+    icon: <UserCog className="h-5 w-5" />,
+    tone: 'amber',
+  },
+  {
+    title: 'Điểm danh',
+    description: 'Theo dõi chuyên cần hằng ngày',
+    href: '/dashboard/attendance',
+    icon: <ClipboardCheck className="h-5 w-5" />,
+    tone: 'sky',
+  },
+  {
+    title: 'Thực đơn',
+    description: 'Danh mục món + lịch tuần',
+    href: '/dashboard/menu',
+    icon: <UtensilsCrossed className="h-5 w-5" />,
+    tone: 'violet',
+  },
+  {
+    title: 'Tiền ăn',
+    description: 'Cấu hình + đối lưu theo tháng',
+    href: '/dashboard/meal-fees',
+    icon: <Wallet className="h-5 w-5" />,
+    tone: 'rose',
+  },
+  {
+    title: 'Hóa đơn',
+    description: 'Sinh hóa đơn + theo dõi thanh toán',
+    href: '/dashboard/invoices',
+    icon: <Receipt className="h-5 w-5" />,
+    tone: 'indigo',
+  },
+  {
+    title: 'Nhật ký chi tiêu',
+    description: 'Sổ chi nội bộ + danh sách đen học phí',
+    href: '/dashboard/expenses',
+    icon: <Banknote className="h-5 w-5" />,
+    tone: 'amber',
   },
 ];
 
-export default function DashboardPage() {
+export default function OverviewPage() {
   const { user } = useAuth();
+  const { selectedCampusId, campuses, isLoading: isLoadingCampuses } = useSelectedCampus();
 
-  // ============== STATE: danh sách campus & campus đang chọn ==============
-  const [campuses, setCampuses] = useState<Campus[]>([]);
-  const [selectedCampusId, setSelectedCampusId] = useState<string>('');
-  const [isLoadingCampuses, setIsLoadingCampuses] = useState(true);
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  // ============== STATE: 4 stats ==============
+  const [studentCount, setStudentCount] = useState<number | null>(null);
+  const [classCount, setClassCount] = useState<number | null>(null);
+  const [teacherCount, setTeacherCount] = useState<number | null>(null);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
 
-  // ============== EFFECT: fetch danh sách campus lúc mount ==============
+  // ============== EFFECT: load stats theo campus ==============
   useEffect(() => {
+    if (!selectedCampusId) {
+      setStudentCount(null);
+      setClassCount(null);
+      setTeacherCount(null);
+      return;
+    }
     let cancelled = false;
-
-    async function fetchCampuses() {
-      setIsLoadingCampuses(true);
+    async function loadStats() {
+      setIsLoadingStats(true);
       try {
-        const res = await campusService.list();
-        // Luôn check response.data?.success trước khi dùng data
-        if (!cancelled && res?.success && Array.isArray(res.data)) {
-          const list = res.data;
-          setCampuses(list);
-          // Mặc định chọn campus đầu tiên nếu chưa chọn
-          if (list.length > 0) {
-            setSelectedCampusId((prev) => prev || list[0].id);
+        const [studentsRes, classesRes, teachersRes] = await Promise.all([
+          studentService.list({ campusId: selectedCampusId, limit: 1 }),
+          classService.list({ campusId: selectedCampusId, limit: 100 }),
+          teacherService.list({ campusId: selectedCampusId, limit: 1 }),
+        ]);
+        if (cancelled) return;
+
+        // Students: đọc total từ meta (nếu BE trả paginated) hoặc array length
+        if (studentsRes?.success && studentsRes.data) {
+          const p = studentsRes.data as unknown;
+          if (Array.isArray(p)) {
+            setStudentCount(p.length);
+          } else {
+            const meta = (p as { meta?: { total?: number } }).meta;
+            setStudentCount(meta?.total ?? 0);
           }
         }
-      } catch (error) {
-        if (!cancelled) {
-          const message =
-            error instanceof Error ? error.message : 'Không thể tải danh sách cơ sở';
-          toast.error(message);
+
+        // Classes: thường là array
+        if (classesRes?.success && Array.isArray(classesRes.data)) {
+          setClassCount(classesRes.data.length);
         }
+
+        // Teachers: tương tự students
+        if (teachersRes?.success && teachersRes.data) {
+          const p = teachersRes.data as unknown;
+          if (Array.isArray(p)) {
+            setTeacherCount(p.length);
+          } else {
+            const meta = (p as { meta?: { total?: number } }).meta;
+            setTeacherCount(meta?.total ?? 0);
+          }
+        }
+      } catch {
+        /* silent — stats chỉ là tổng quan */
       } finally {
-        if (!cancelled) {
-          setIsLoadingCampuses(false);
-        }
+        if (!cancelled) setIsLoadingStats(false);
       }
     }
-
-    fetchCampuses();
+    loadStats();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [selectedCampusId]);
 
-  // ============== CALLBACK: khi tạo campus mới thành công ==============
-  const handleCampusCreated = useCallback((newCampus: Campus) => {
-    setCampuses((prev) => [...prev, newCampus]);
-    setSelectedCampusId(newCampus.id);
-  }, []);
-
-  // ============== COMPUTED: campus hiện tại (để hiển thị tên ở tiêu đề) ==============
-  const currentCampus = campuses.find((c) => c.id === selectedCampusId);
-
-  // ============== COMPUTED: stats cards (mock — sẽ nối API thật ở bước sau) ==============
-  // Lưu ý: hiện tại chưa gọi API thống kê theo campus. Khi có endpoint thật, các giá trị
-  // này sẽ được thay bằng dữ liệu từ `useEffect` phụ thuộc `selectedCampusId`.
+  // ============== 4 Stats Cards ==============
   const statsCards: StatsCardData[] = [
-    {
-      label: 'Tổng học sinh',
-      value: 0,
-      icon: <GraduationCap className="h-5 w-5" />,
-      tone: 'indigo',
-    },
-    {
-      label: 'Tổng lớp học',
-      value: 0,
-      icon: <School className="h-5 w-5" />,
-      tone: 'emerald',
-    },
-    {
-      label: 'Tổng giáo viên',
-      value: 0,
-      icon: <UserCog className="h-5 w-5" />,
-      tone: 'amber',
-    },
+    { label: 'Tổng học sinh', value: studentCount, icon: <GraduationCap className="h-5 w-5" />, tone: 'indigo' },
+    { label: 'Tổng lớp học', value: classCount, icon: <School className="h-5 w-5" />, tone: 'emerald' },
+    { label: 'Tổng giáo viên', value: teacherCount, icon: <UserCog className="h-5 w-5" />, tone: 'amber' },
     {
       label: 'Doanh thu học phí ước tính',
       value: 0,
       icon: <Wallet className="h-5 w-5" />,
       tone: 'sky',
+      isCurrency: true,
     },
   ];
 
+  const currentCampus = campuses.find((c) => c.id === selectedCampusId);
+
   return (
     <div className="space-y-6">
-      {/* ================== HEADER + CAMPUS SWITCHER ================== */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-800">
-              Tổng quan
-            </h1>
-            {currentCampus && (
-              <Badge variant="secondary" className="font-normal">
-                <Building2 className="mr-1 h-3 w-3" />
-                {currentCampus.name}
-              </Badge>
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Xin chào {user?.fullName ?? 'bạn'} — theo dõi tình hình vận hành các cơ sở
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          {/* Switcher cơ sở */}
-          <div className="w-full sm:w-72">
-            {isLoadingCampuses ? (
-              <Skeleton className="h-9 w-full" />
-            ) : campuses.length > 0 ? (
-              <Select
-                value={selectedCampusId}
-                onValueChange={setSelectedCampusId}
-              >
-                <SelectTrigger>
-                  <div className="flex items-center gap-2 truncate">
-                    <Building2 className="h-4 w-4 shrink-0 text-slate-500" />
-                    <SelectValue placeholder="Chọn cơ sở" />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  {campuses.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <EmptyCampusState onAddClick={() => setCreateDialogOpen(true)} />
-            )}
-          </div>
-
-          {/* Nút mở Dialog thêm cơ sở */}
-          <Button onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Thêm cơ sở
-          </Button>
-        </div>
+      {/* ================== HERO: CHÀO + GỢI Ý ================== */}
+      <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 shadow-sm">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800">
+          Xin chào {user?.fullName ?? 'bạn'} 👋
+        </h1>
+        <p className="mt-1 text-sm text-slate-600">
+          {currentCampus ? (
+            <>
+              Đang theo dõi vận hành tại cơ sở <strong>{currentCampus.name}</strong>. Bấm vào
+              các shortcut bên dưới hoặc dùng menu bên trái để chuyển phân hệ.
+            </>
+          ) : campuses.length === 0 && !isLoadingCampuses ? (
+            <>
+              Bạn chưa có cơ sở nào. Bấm nút <strong>Thêm cơ sở</strong> ở Header trên để bắt đầu
+              quản lý.
+            </>
+          ) : (
+            <>Đang tải danh sách cơ sở...</>
+          )}
+        </p>
       </div>
 
-      {/* ================== STATS CARDS ================== */}
+      {/* ================== 4 STATS CARDS ================== */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {statsCards.map((card) => (
-          <StatsCard key={card.label} data={card} />
+          <StatsCard key={card.label} data={card} loading={isLoadingStats && card.value === null} />
         ))}
       </div>
 
-      {/* ================== TABS ĐIỀU HƯỚNG CHỨC NĂNG ==================
-          Thứ tự tab:
-          1-3: Lớp học, Học sinh, Giáo viên (3 tab có logic chi tiết)
-          4:   Thực đơn (danh mục món + lịch tuần)
-          5:   Học phí & Tiền ăn (đối lưu điểm danh)
-          6:   Nhật ký chi tiêu & Hóa đơn (sổ chi + blacklist)
-          Còn lại: Tổng quan, Điểm danh (placeholder) */}
-      <Tabs defaultValue="classes" className="w-full">
-        <TabsList className="flex w-full flex-wrap justify-start gap-1 sm:flex-nowrap sm:overflow-x-auto">
-          {/* Tab 1: Lớp học */}
-          <TabsTrigger value="classes" className="flex-shrink-0">
-            <School className="h-4 w-4" />
-            <span className="hidden sm:inline">Lớp học</span>
-          </TabsTrigger>
-          {/* Tab 2: Học sinh */}
-          <TabsTrigger value="students" className="flex-shrink-0">
-            <GraduationCap className="h-4 w-4" />
-            <span className="hidden sm:inline">Học sinh</span>
-          </TabsTrigger>
-          {/* Tab 3: Giáo viên */}
-          <TabsTrigger value="teachers" className="flex-shrink-0">
-            <UserCog className="h-4 w-4" />
-            <span className="hidden sm:inline">Giáo viên</span>
-          </TabsTrigger>
-          {/* Tab 4: Thực đơn */}
-          <TabsTrigger value="menu" className="flex-shrink-0">
-            <UtensilsCrossed className="h-4 w-4" />
-            <span className="hidden sm:inline">Thực đơn</span>
-          </TabsTrigger>
-          {/* Tab 5: Học phí & Tiền ăn */}
-          <TabsTrigger value="tuition" className="flex-shrink-0">
-            <Wallet className="h-4 w-4" />
-            <span className="hidden sm:inline">Tiền ăn</span>
-          </TabsTrigger>
-          {/* Tab 6: Nhật ký chi tiêu & Hóa đơn */}
-          <TabsTrigger value="reports" className="flex-shrink-0">
-            <FileBarChart className="h-4 w-4" />
-            <span className="hidden sm:inline">Nhật ký</span>
-          </TabsTrigger>
-          {/* Các tab còn lại (placeholder) */}
-          {PLACEHOLDER_TABS.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value} className="flex-shrink-0">
-              {tab.icon}
-              <span className="hidden sm:inline">{tab.label}</span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        {/* === 6 Tab có logic chi tiết (gắn liền selectedCampusId) === */}
-        <TabsContent value="classes">
-          <ClassesTab campusId={selectedCampusId} />
-        </TabsContent>
-        <TabsContent value="students">
-          <StudentsTab campusId={selectedCampusId} />
-        </TabsContent>
-        <TabsContent value="teachers">
-          <TeachersTab campusId={selectedCampusId} />
-        </TabsContent>
-        <TabsContent value="menu">
-          <MenuTab campusId={selectedCampusId} />
-        </TabsContent>
-        <TabsContent value="tuition">
-          <MealFeeTab campusId={selectedCampusId} />
-        </TabsContent>
-        <TabsContent value="reports">
-          <ExpenseInvoiceTab campusId={selectedCampusId} />
-        </TabsContent>
-
-        {/* === Các tab placeholder === */}
-        {PLACEHOLDER_TABS.map((tab) => (
-          <TabsContent key={tab.value} value={tab.value}>
-            <TabPlaceholder tab={tab} campusName={currentCampus?.name} />
-          </TabsContent>
-        ))}
-      </Tabs>
-
-      {/* ================== DIALOG THÊM CƠ SỞ MỚI ================== */}
-      <CreateCampusDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-        onCreated={handleCampusCreated}
-      />
+      {/* ================== SHORTCUTS TỚI CÁC PHÂN HỆ ================== */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-slate-800">Truy cập nhanh</CardTitle>
+          <CardDescription>
+            Bấm vào từng thẻ để mở phân hệ tương ứng (sidebar cũng có thể dùng).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {SHORTCUTS.map((s) => (
+              <ShortcutCard key={s.href} item={s} />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
 // =====================================================================================
-// SUB-COMPONENT: StatsCard — 1 thẻ thống kê
+// SUB-COMPONENT: StatsCard
 // =====================================================================================
-function StatsCard({ data }: { data: StatsCardData }) {
-  // Bảng màu nền + chữ theo `tone` để đồng bộ với brand indigo của app
+function StatsCard({
+  data,
+  loading,
+}: {
+  data: StatsCardData;
+  loading?: boolean;
+}) {
   const toneStyles: Record<StatsCardData['tone'], string> = {
     indigo: 'bg-indigo-50 text-indigo-600',
     emerald: 'bg-emerald-50 text-emerald-600',
@@ -398,9 +277,12 @@ function StatsCard({ data }: { data: StatsCardData }) {
     sky: 'bg-sky-50 text-sky-600',
   };
 
-  // Nếu là thẻ tiền tệ → dùng formatVND; ngược lại format số thường
-  const isCurrency = data.suffix === '₫' || data.label.toLowerCase().includes('doanh thu');
-  const displayValue = isCurrency ? formatVND(data.value) : data.value.toLocaleString('vi-VN');
+  const displayValue =
+    data.value === null
+      ? '—'
+      : data.isCurrency
+        ? formatVND(data.value)
+        : data.value.toLocaleString('vi-VN');
 
   return (
     <Card>
@@ -408,9 +290,11 @@ function StatsCard({ data }: { data: StatsCardData }) {
         <div className="flex items-start justify-between">
           <div className="space-y-1">
             <p className="text-sm font-medium text-muted-foreground">{data.label}</p>
-            <p className="text-2xl font-bold tracking-tight text-slate-900">
-              {displayValue}
-            </p>
+            {loading ? (
+              <Skeleton className="h-7 w-24" />
+            ) : (
+              <p className="text-2xl font-bold tracking-tight text-slate-900">{displayValue}</p>
+            )}
           </div>
           <div className={cn('rounded-lg p-2.5', toneStyles[data.tone])}>{data.icon}</div>
         </div>
@@ -420,202 +304,33 @@ function StatsCard({ data }: { data: StatsCardData }) {
 }
 
 // =====================================================================================
-// SUB-COMPONENT: EmptyCampusState — Hiển thị khi campuses[] rỗng
+// SUB-COMPONENT: ShortcutCard
 // =====================================================================================
-function EmptyCampusState({ onAddClick }: { onAddClick: () => void }) {
-  return (
-    <div className="flex h-9 items-center gap-2 rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm text-slate-500">
-      <Building2 className="h-4 w-4 shrink-0" />
-      <span className="truncate">Chưa có cơ sở nào.</span>
-      <button
-        onClick={onAddClick}
-        className="ml-auto text-xs font-medium text-indigo-600 hover:underline"
-      >
-        Tạo ngay
-      </button>
-    </div>
-  );
-}
-
-// =====================================================================================
-// SUB-COMPONENT: TabPlaceholder — Layout trống cho mỗi Tab (sẽ fill sau)
-// =====================================================================================
-function TabPlaceholder({
-  tab,
-  campusName,
-}: {
-  tab: FunctionalTab;
-  campusName?: string;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2 text-slate-800">
-              {tab.icon}
-              {tab.label}
-            </CardTitle>
-            <CardDescription>{tab.description}</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" disabled>
-            {tab.primaryAction.icon}
-            {tab.primaryAction.label}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="flex min-h-[200px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 px-6 py-10 text-center">
-          <div className="mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-            {tab.icon}
-          </div>
-          <h3 className="text-sm font-semibold text-slate-700">Phân hệ đang được phát triển</h3>
-          <p className="mt-1 max-w-md text-xs text-muted-foreground">
-            Logic chi tiết của phân hệ <strong>{tab.label}</strong>
-            {campusName ? <> cho cơ sở <strong>{campusName}</strong></> : null} sẽ được bổ sung ở
-            bước tiếp theo. Bấm nút bên trên để xem chức năng tương ứng.
-          </p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// =====================================================================================
-// SUB-COMPONENT: CreateCampusDialog — Form thêm cơ sở mới (Dialog)
-// =====================================================================================
-function CreateCampusDialog({
-  open,
-  onOpenChange,
-  onCreated,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreated: (campus: Campus) => void;
-}) {
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const form = useForm<CreateCampusFormValues>({
-    resolver: zodResolver(createCampusSchema),
-    defaultValues: { name: '', address: '' },
-  });
-
-  // Reset form mỗi khi đóng Dialog
-  useEffect(() => {
-    if (!open) {
-      form.reset({ name: '', address: '' });
-    }
-  }, [open, form]);
-
-  const onSubmit = async (values: CreateCampusFormValues) => {
-    setIsSubmitting(true);
-    try {
-      const res = await campusService.create({
-        name: values.name.trim(),
-        address: values.address.trim(),
-      });
-      // Luôn check response.data?.success trước khi dùng data
-      if (res?.success && res.data) {
-        toast.success(`Đã tạo cơ sở "${res.data.name}"`);
-        onCreated(res.data);
-        onOpenChange(false);
-      } else {
-        toast.error(res?.message ?? 'Tạo cơ sở thất bại');
-      }
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Có lỗi xảy ra khi tạo cơ sở';
-      toast.error(message);
-    } finally {
-      // Luôn release trạng thái loading dù thành công hay thất bại
-      setIsSubmitting(false);
-    }
+function ShortcutCard({ item }: { item: ShortcutItem }) {
+  const toneStyles: Record<ShortcutItem['tone'], { bg: string; text: string; ring: string }> = {
+    indigo: { bg: 'bg-indigo-50', text: 'text-indigo-600', ring: 'hover:ring-indigo-200' },
+    emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'hover:ring-emerald-200' },
+    amber: { bg: 'bg-amber-50', text: 'text-amber-600', ring: 'hover:ring-amber-200' },
+    sky: { bg: 'bg-sky-50', text: 'text-sky-600', ring: 'hover:ring-sky-200' },
+    rose: { bg: 'bg-rose-50', text: 'text-rose-600', ring: 'hover:ring-rose-200' },
+    violet: { bg: 'bg-violet-50', text: 'text-violet-600', ring: 'hover:ring-violet-200' },
   };
+  const tone = toneStyles[item.tone];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        {/* Trigger ẩn — Dialog được mở qua state từ component cha */}
-        <span className="hidden" />
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-indigo-600" />
-            Thêm cơ sở mới
-          </DialogTitle>
-          <DialogDescription>
-            Tạo một cơ sở mới để bắt đầu quản lý học sinh, lớp học và giáo viên tại đây.
-          </DialogDescription>
-        </DialogHeader>
-
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Tên cơ sở</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Vd: Cơ sở Quận 1"
-                      autoComplete="off"
-                      disabled={isSubmitting}
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="address"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Địa chỉ</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Vd: 12 Nguyễn Huệ, Quận 1, TP.HCM"
-                      autoComplete="off"
-                      disabled={isSubmitting}
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <DialogFooter className="gap-2 pt-2 sm:gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-                disabled={isSubmitting}
-              >
-                Hủy
-              </Button>
-              {/* Nút Submit có loading + disabled ngay khi click — chống double-click */}
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Đang tạo...
-                  </>
-                ) : (
-                  <>
-                    <Plus className="h-4 w-4" />
-                    Tạo cơ sở
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+    <Link
+      href={item.href}
+      className={cn(
+        'group flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 transition-all hover:shadow-md hover:ring-2',
+        tone.ring,
+      )}
+    >
+      <div className={cn('rounded-lg p-2', tone.bg, tone.text)}>{item.icon}</div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+        <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{item.description}</p>
+      </div>
+      <ArrowRight className="h-4 w-4 shrink-0 self-center text-slate-300 transition-colors group-hover:text-slate-500" />
+    </Link>
   );
 }

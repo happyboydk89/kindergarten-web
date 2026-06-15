@@ -1,6 +1,7 @@
 'use client';
 
-import { usePathname, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { filterMenuByRole } from '@/config/menu';
@@ -36,48 +37,65 @@ function SidebarSkeleton() {
   );
 }
 
+/**
+ * 1 item trong Sidebar — dùng Next.js <Link> để:
+ *  - Tự động prefetch khi vào viewport (UX nhanh hơn)
+ *  - Hỗ trợ middle-click / cmd-click mở tab mới
+ *  - Tốt cho SEO + accessibility
+ */
 function SidebarNavItem({
   href,
   icon: Icon,
   label,
   collapsed,
   active,
+  onNavigate,
 }: {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   collapsed: boolean;
   active: boolean;
+  /** Callback khi user click — dùng để đóng mobile sheet. */
+  onNavigate?: () => void;
 }) {
-  const router = useRouter();
+  const linkContent = (
+    <Link
+      href={href}
+      onClick={onNavigate}
+      className={cn(
+        'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+        active
+          ? 'bg-indigo-50 text-indigo-600'
+          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+        collapsed && 'justify-center px-2',
+      )}
+    >
+      <Icon className={cn('h-5 w-5 shrink-0', active ? 'text-indigo-600' : 'text-slate-400')} />
+      {!collapsed && <span>{label}</span>}
+    </Link>
+  );
 
-  return (
-    <Tooltip delayDuration={0} disableHoverableContent>
-      <TooltipTrigger asChild>
-        <button
-          onClick={() => router.push(href)}
-          className={cn(
-            'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-            active
-              ? 'bg-indigo-50 text-indigo-600'
-              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
-            collapsed && 'justify-center px-2',
-          )}
-        >
-          <Icon className={cn('h-5 w-5 shrink-0', active ? 'text-indigo-600' : 'text-slate-400')} />
-          {!collapsed && <span>{label}</span>}
-        </button>
-      </TooltipTrigger>
-      {collapsed && (
+  if (collapsed) {
+    return (
+      <Tooltip delayDuration={0} disableHoverableContent>
+        <TooltipTrigger asChild>{linkContent}</TooltipTrigger>
         <TooltipContent side="right" className="text-xs">
           {label}
         </TooltipContent>
-      )}
-    </Tooltip>
-  );
+      </Tooltip>
+    );
+  }
+  return linkContent;
 }
 
-function SidebarContent({ collapsed }: { collapsed: boolean }) {
+function SidebarContent({
+  collapsed,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const { role } = useAuth();
   const items = filterMenuByRole(role);
@@ -91,7 +109,12 @@ function SidebarContent({ collapsed }: { collapsed: boolean }) {
           icon={item.icon}
           label={item.title}
           collapsed={collapsed}
-          active={pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href))}
+          // Active state: khớp chính xác, hoặc là trang con của href (vd /dashboard/classes/123 vẫn active cho /dashboard/classes)
+          active={
+            pathname === item.href ||
+            (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'))
+          }
+          onNavigate={onNavigate}
         />
       ))}
     </div>
@@ -102,7 +125,8 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
   const { isLoading } = useAuth();
 
   const brand = (
-    <div
+    <Link
+      href="/dashboard"
       className={cn(
         'flex items-center gap-2 px-4 h-14 border-b border-slate-200',
         collapsed ? 'justify-center' : 'justify-between',
@@ -114,7 +138,7 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
         </div>
         {!collapsed && <span className="font-semibold text-slate-900">Kindergarten</span>}
       </div>
-    </div>
+    </Link>
   );
 
   const menuContent = isLoading ? <SidebarSkeleton /> : <SidebarContent collapsed={collapsed} />;
@@ -153,7 +177,8 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Side
           {brand}
           <Separator />
           <nav className="flex-1 overflow-y-auto py-4">
-            <SidebarContent collapsed={false} />
+            {/* Bấm item → đóng sheet + navigate */}
+            <SidebarContent collapsed={false} onNavigate={onMobileClose} />
           </nav>
         </SheetContent>
       </Sheet>

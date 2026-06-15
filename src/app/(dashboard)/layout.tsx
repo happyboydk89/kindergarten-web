@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Sidebar } from '@/components/shared/sidebar';
 import { Navbar } from '@/components/shared/navbar';
+import {
+  CampusProvider,
+  DashboardHeader,
+} from '@/components/shared/dashboard-header';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Loader2 } from 'lucide-react';
 
@@ -38,22 +42,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <TooltipProvider>
-      <div className="flex h-screen overflow-hidden bg-slate-50">
-        <Sidebar
-          collapsed={collapsed}
-          onToggle={() => setCollapsed(!collapsed)}
-          mobileOpen={mobileOpen}
-          onMobileClose={() => setMobileOpen(false)}
-        />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <Navbar
+      {/* CampusProvider bao bọc toàn bộ dashboard — share `selectedCampusId`
+          cho Header (write) và các page con (read). */}
+      <CampusProvider>
+        <div className="flex h-screen overflow-hidden bg-slate-50">
+          <Sidebar
             collapsed={collapsed}
-            onToggleCollapse={() => setCollapsed(!collapsed)}
-            onMobileMenuOpen={() => setMobileOpen(true)}
+            onToggle={() => setCollapsed(!collapsed)}
+            mobileOpen={mobileOpen}
+            onMobileClose={() => setMobileOpen(false)}
           />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Navbar
+              collapsed={collapsed}
+              onToggleCollapse={() => setCollapsed(!collapsed)}
+              onMobileMenuOpen={() => setMobileOpen(true)}
+            />
+            <main className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-4">
+                <DashboardHeader />
+                {children}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
+      </CampusProvider>
     </TooltipProvider>
   );
 }

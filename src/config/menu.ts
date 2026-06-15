@@ -1,15 +1,21 @@
 import {
   LayoutDashboard,
-  Users,
-  ClipboardCheck,
+  School,
+  GraduationCap,
+  UserCog,
   UtensilsCrossed,
-  CookingPot,
-  Settings,
+  Wallet,
   Receipt,
+  Banknote,
+  ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 import type { UserRole } from '@/types';
 
+/**
+ * Mỗi item trong Sidebar bên trái — tương ứng với 1 route (/dashboard/...).
+ * Người dùng bấm vào đây sẽ điều hướng sang trang riêng (không phải Tab).
+ */
 export interface SidebarItem {
   title: string;
   href: string;
@@ -25,9 +31,21 @@ export const sidebarItems: SidebarItem[] = [
     roles: ['PRINCIPAL', 'TEACHER', 'STAFF'],
   },
   {
-    title: 'Quản lý Học sinh',
+    title: 'Lớp học',
+    href: '/dashboard/classes',
+    icon: School,
+    roles: ['PRINCIPAL', 'TEACHER', 'STAFF'],
+  },
+  {
+    title: 'Học sinh',
     href: '/dashboard/students',
-    icon: Users,
+    icon: GraduationCap,
+    roles: ['PRINCIPAL', 'TEACHER', 'STAFF'],
+  },
+  {
+    title: 'Giáo viên',
+    href: '/dashboard/teachers',
+    icon: UserCog,
     roles: ['PRINCIPAL'],
   },
   {
@@ -43,21 +61,21 @@ export const sidebarItems: SidebarItem[] = [
     roles: ['PRINCIPAL', 'STAFF'],
   },
   {
-    title: 'Nhật ký bếp',
-    href: '/dashboard/kitchen',
-    icon: CookingPot,
+    title: 'Tiền ăn',
+    href: '/dashboard/meal-fees',
+    icon: Wallet,
     roles: ['PRINCIPAL', 'STAFF'],
-  },
-  {
-    title: 'Cấu hình học phí',
-    href: '/dashboard/fee-configs',
-    icon: Settings,
-    roles: ['PRINCIPAL'],
   },
   {
     title: 'Hóa đơn',
     href: '/dashboard/invoices',
     icon: Receipt,
+    roles: ['PRINCIPAL', 'STAFF'],
+  },
+  {
+    title: 'Nhật ký chi tiêu',
+    href: '/dashboard/expenses',
+    icon: Banknote,
     roles: ['PRINCIPAL', 'STAFF'],
   },
 ];
