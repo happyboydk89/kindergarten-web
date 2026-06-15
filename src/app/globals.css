@@ -2,6 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+/**
+ * Radix UI (Select, Popover, DropdownMenu, Tooltip, ...) tự sinh ra wrapper
+ * div với attribute `data-radix-popper-content-wrapper` khi mount Portal.
+ * Selector này không thể style bằng className trong code (do Radix quản lý).
+ *
+ * → Ép nền trắng + shadow lên mọi phần tử con của wrapper để đảm bảo tất cả
+ *   Select / Popover / DropdownMenu / Tooltip content đều có nền trắng,
+ *   bất kể component con dùng `bg-popover` hay `bg-background` (CSS variable).
+ */
+[data-radix-popper-content-wrapper] {
+  z-index: 50;
+}
+
+[data-radix-popper-content-wrapper] > * {
+  background-color: #ffffff !important;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

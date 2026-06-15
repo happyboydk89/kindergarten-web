@@ -9,6 +9,18 @@
  *   - 4 Stats Cards (Tổng HS, Tổng lớp, Tổng GV, Doanh thu học phí ước tính)
  *   - Danh sách shortcut nhanh tới các module con (Lớp học, Học sinh, ...)
  *
+ * BỘ QUẢN LÝ BỐI CẢNH CƠ SỞ (Campus Context Manager):
+ *   - `selectedCampusId` được quản lý bởi `useSelectedCampus()` (xem
+ *     src/components/shared/dashboard-header.tsx) — đã persist vào localStorage
+ *     và share cho toàn bộ dashboard.
+ *   - Logic fetch stats tách riêng vào `useDashboardStats` (xem
+ *     src/hooks/use-dashboard-stats.ts) — auto re-fetch khi campusId đổi, dùng
+ *     Promise.allSettled để chịu lỗi từng phần.
+ *   - 2 chỉ số (Giáo viên theo campus, Doanh thu) hiện Backend chưa có endpoint;
+ *     StatsCard sẽ render "—" mờ + Tooltip giải thích.
+ *   - Khi campuses.length === 0 (user mới tạo tài khoản PRINCIPAL), page sẽ tự
+ *     mount 1 instance CreateCampusDialog kèm CTA "Tạo cơ sở đầu tiên" trong hero.
+ *
  * Mọi logic chi tiết của từng phân hệ đã được tách sang các route riêng:
  *   /dashboard/classes    — Lớp học
  *   /dashboard/students   — Học sinh
@@ -25,37 +37,52 @@
  */
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
-  Building2,
+  ArrowRight,
+  Banknote,
+  ClipboardCheck,
   GraduationCap,
+  Info,
+  Plus,
+  Receipt,
   School,
   UserCog,
   UtensilsCrossed,
   Wallet,
-  ClipboardCheck,
-  Receipt,
-  Banknote,
-  ArrowRight,
-  Loader2,
 } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
+import { CreateCampusDialog } from '@/components/shared/create-campus-dialog';
 import { cn, formatVND } from '@/lib/utils';
 import { useAuth } from '@/hooks/use-auth';
 import { useSelectedCampus } from '@/components/shared/dashboard-header';
-import { studentService } from '@/services/student.service';
-import { classService } from '@/services/class.service';
-import { teacherService } from '@/services/teacher.service';
+import { useDashboardStats } from '@/hooks/use-dashboard-stats';
+import type { Campus } from '@/services/campus.service';
+
+// =====================================================================================
+// TYPES
+// =====================================================================================
 
 // ---------- Kiểu dữ liệu Stats Card ----------
+type StatsCardTone = 'indigo' | 'emerald' | 'amber' | 'sky' | 'rose';
+
 interface StatsCardData {
+  id: 'students' | 'classes' | 'teachers' | 'revenue';
   label: string;
   value: number | null;
   icon: React.ReactNode;
-  tone: 'indigo' | 'emerald' | 'amber' | 'sky';
+  tone: StatsCardTone;
   isCurrency?: boolean;
+  /**
+   * Khi có → StatsCard sẽ render "—" mờ kèm Tooltip giải thích lý do Backend
+   * chưa hỗ trợ chỉ số này. Không cần truyền `value` thật.
+   */
+  disabledReason?: string;
 }
 
 // ---------- Shortcut items (link sang các route con) ----------
@@ -66,6 +93,10 @@ interface ShortcutItem {
   icon: React.ReactNode;
   tone: 'indigo' | 'emerald' | 'amber' | 'sky' | 'rose' | 'violet';
 }
+
+// =====================================================================================
+// CONSTANTS
+// =====================================================================================
 
 const SHORTCUTS: ShortcutItem[] = [
   {
@@ -126,117 +157,116 @@ const SHORTCUTS: ShortcutItem[] = [
   },
 ];
 
+// =====================================================================================
+// MAIN COMPONENT
+// =====================================================================================
+
 export default function OverviewPage() {
-  const { user } = useAuth();
-  const { selectedCampusId, campuses, isLoading: isLoadingCampuses } = useSelectedCampus();
+  const { user, role } = useAuth();
+  const {
+    selectedCampusId,
+    campuses,
+    isLoading: isLoadingCampuses,
+    setSelectedCampusId,
+    refreshCampuses,
+  } = useSelectedCampus();
 
-  // ============== STATE: 4 stats ==============
-  const [studentCount, setStudentCount] = useState<number | null>(null);
-  const [classCount, setClassCount] = useState<number | null>(null);
-  const [teacherCount, setTeacherCount] = useState<number | null>(null);
-  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  // Hook fetch stats tự động re-fetch khi `selectedCampusId` đổi
+  const { stats, isLoading: isLoadingStats } = useDashboardStats(selectedCampusId, role);
 
-  // ============== EFFECT: load stats theo campus ==============
-  useEffect(() => {
-    if (!selectedCampusId) {
-      setStudentCount(null);
-      setClassCount(null);
-      setTeacherCount(null);
-      return;
-    }
-    let cancelled = false;
-    async function loadStats() {
-      setIsLoadingStats(true);
-      try {
-        const [studentsRes, classesRes, teachersRes] = await Promise.all([
-          studentService.list({ campusId: selectedCampusId, limit: 1 }),
-          classService.list({ campusId: selectedCampusId, limit: 100 }),
-          teacherService.list({ campusId: selectedCampusId, limit: 1 }),
-        ]);
-        if (cancelled) return;
+  // State riêng cho Dialog "Tạo cơ sở đầu tiên" trong empty state
+  // (Header vẫn có nút riêng cho case có campus)
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-        // Students: đọc total từ meta (nếu BE trả paginated) hoặc array length
-        if (studentsRes?.success && studentsRes.data) {
-          const p = studentsRes.data as unknown;
-          if (Array.isArray(p)) {
-            setStudentCount(p.length);
-          } else {
-            const meta = (p as { meta?: { total?: number } }).meta;
-            setStudentCount(meta?.total ?? 0);
-          }
-        }
-
-        // Classes: thường là array
-        if (classesRes?.success && Array.isArray(classesRes.data)) {
-          setClassCount(classesRes.data.length);
-        }
-
-        // Teachers: tương tự students
-        if (teachersRes?.success && teachersRes.data) {
-          const p = teachersRes.data as unknown;
-          if (Array.isArray(p)) {
-            setTeacherCount(p.length);
-          } else {
-            const meta = (p as { meta?: { total?: number } }).meta;
-            setTeacherCount(meta?.total ?? 0);
-          }
-        }
-      } catch {
-        /* silent — stats chỉ là tổng quan */
-      } finally {
-        if (!cancelled) setIsLoadingStats(false);
-      }
-    }
-    loadStats();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedCampusId]);
+  const handleCampusCreated = useCallback(
+    (c: Campus) => {
+      setSelectedCampusId(c.id);
+      void refreshCampuses();
+      setIsCreateOpen(false);
+    },
+    [setSelectedCampusId, refreshCampuses],
+  );
 
   // ============== 4 Stats Cards ==============
   const statsCards: StatsCardData[] = [
-    { label: 'Tổng học sinh', value: studentCount, icon: <GraduationCap className="h-5 w-5" />, tone: 'indigo' },
-    { label: 'Tổng lớp học', value: classCount, icon: <School className="h-5 w-5" />, tone: 'emerald' },
-    { label: 'Tổng giáo viên', value: teacherCount, icon: <UserCog className="h-5 w-5" />, tone: 'amber' },
     {
+      id: 'students',
+      label: 'Tổng học sinh',
+      value: stats.studentCount,
+      icon: <GraduationCap className="h-5 w-5" />,
+      tone: 'indigo',
+    },
+    {
+      id: 'classes',
+      label: 'Tổng lớp học',
+      value: stats.classCount,
+      icon: <School className="h-5 w-5" />,
+      tone: 'emerald',
+    },
+    {
+      id: 'teachers',
+      label: 'Tổng giáo viên',
+      value: stats.teacherCount,
+      icon: <UserCog className="h-5 w-5" />,
+      tone: 'amber',
+      disabledReason: 'Đang chờ Backend bổ sung endpoint GET /campuses/:campusId/teachers',
+    },
+    {
+      id: 'revenue',
       label: 'Doanh thu học phí ước tính',
-      value: 0,
+      value: stats.revenue,
       icon: <Wallet className="h-5 w-5" />,
       tone: 'sky',
       isCurrency: true,
+      disabledReason: 'Đang chờ Backend bổ sung endpoint GET /campuses/:campusId/stats',
     },
   ];
 
   const currentCampus = campuses.find((c) => c.id === selectedCampusId);
+  const showEmptyState = !isLoadingCampuses && campuses.length === 0 && role === 'PRINCIPAL';
 
   return (
     <div className="space-y-6">
-      {/* ================== HERO: CHÀO + GỢI Ý ================== */}
+      {/* ================== HERO: CHÀO + GỢI Ý + CTA EMPTY STATE ================== */}
       <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-sky-50 p-6 shadow-sm">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-800">
-          Xin chào {user?.fullName ?? 'bạn'} 👋
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {currentCampus ? (
-            <>
-              Đang theo dõi vận hành tại cơ sở <strong>{currentCampus.name}</strong>. Bấm vào
-              các shortcut bên dưới hoặc dùng menu bên trái để chuyển phân hệ.
-            </>
-          ) : campuses.length === 0 && !isLoadingCampuses ? (
-            <>
-              Bạn chưa có cơ sở nào. Bấm nút <strong>Thêm cơ sở</strong> ở Header trên để bắt đầu
-              quản lý.
-            </>
-          ) : (
-            <>Đang tải danh sách cơ sở...</>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-800">
+              Xin chào {user?.fullName ?? 'bạn'} 👋
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              {currentCampus ? (
+                <>
+                  Đang theo dõi vận hành tại cơ sở <strong>{currentCampus.name}</strong>. Bấm vào
+                  các shortcut bên dưới hoặc dùng menu bên trái để chuyển phân hệ.
+                </>
+              ) : showEmptyState ? (
+                <>
+                  Bạn chưa có cơ sở nào. Bấm nút <strong>Tạo cơ sở đầu tiên</strong> bên cạnh để
+                  bắt đầu quản lý học sinh, lớp học và giáo viên.
+                </>
+              ) : (
+                <>Đang tải danh sách cơ sở...</>
+              )}
+            </p>
+          </div>
+          {showEmptyState && (
+            <Button onClick={() => setIsCreateOpen(true)} className="shrink-0">
+              <Plus className="h-4 w-4" />
+              Tạo cơ sở đầu tiên
+            </Button>
           )}
-        </p>
+        </div>
       </div>
 
       {/* ================== 4 STATS CARDS ================== */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {statsCards.map((card) => (
-          <StatsCard key={card.label} data={card} loading={isLoadingStats && card.value === null} />
+          <StatsCard
+            key={card.id}
+            data={card}
+            loading={isLoadingStats && card.value === null && !card.disabledReason}
+          />
         ))}
       </div>
 
@@ -256,6 +286,13 @@ export default function OverviewPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ================== DIALOG TẠO CƠ SỞ (cho empty state) ================== */}
+      <CreateCampusDialog
+        open={isCreateOpen}
+        onOpenChange={setIsCreateOpen}
+        onCreated={handleCampusCreated}
+      />
     </div>
   );
 }
@@ -263,18 +300,13 @@ export default function OverviewPage() {
 // =====================================================================================
 // SUB-COMPONENT: StatsCard
 // =====================================================================================
-function StatsCard({
-  data,
-  loading,
-}: {
-  data: StatsCardData;
-  loading?: boolean;
-}) {
-  const toneStyles: Record<StatsCardData['tone'], string> = {
+function StatsCard({ data, loading }: { data: StatsCardData; loading?: boolean }) {
+  const toneStyles: Record<StatsCardTone, string> = {
     indigo: 'bg-indigo-50 text-indigo-600',
     emerald: 'bg-emerald-50 text-emerald-600',
     amber: 'bg-amber-50 text-amber-600',
     sky: 'bg-sky-50 text-sky-600',
+    rose: 'bg-rose-50 text-rose-600',
   };
 
   const displayValue =
@@ -284,23 +316,61 @@ function StatsCard({
         ? formatVND(data.value)
         : data.value.toLocaleString('vi-VN');
 
-  return (
+  const isDisabled = !!data.disabledReason;
+
+  const cardBody = (
     <Card>
       <CardContent className="pt-6">
         <div className="flex items-start justify-between">
           <div className="space-y-1">
-            <p className="text-sm font-medium text-muted-foreground">{data.label}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm font-medium text-muted-foreground">{data.label}</p>
+              {isDisabled && (
+                <Info
+                  className="h-3.5 w-3.5 shrink-0 text-amber-500"
+                  aria-label={data.disabledReason}
+                />
+              )}
+            </div>
             {loading ? (
               <Skeleton className="h-7 w-24" />
             ) : (
-              <p className="text-2xl font-bold tracking-tight text-slate-900">{displayValue}</p>
+              <p
+                className={cn(
+                  'text-2xl font-bold tracking-tight',
+                  isDisabled ? 'text-slate-400' : 'text-slate-900',
+                )}
+              >
+                {displayValue}
+              </p>
             )}
           </div>
-          <div className={cn('rounded-lg p-2.5', toneStyles[data.tone])}>{data.icon}</div>
+          <div
+            className={cn(
+              'rounded-lg p-2.5',
+              toneStyles[data.tone],
+              isDisabled && 'opacity-60',
+            )}
+          >
+            {data.icon}
+          </div>
         </div>
       </CardContent>
     </Card>
   );
+
+  if (isDisabled) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{cardBody}</TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs">
+          <p className="text-xs">{data.disabledReason}</p>
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return cardBody;
 }
 
 // =====================================================================================
