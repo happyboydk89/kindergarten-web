@@ -99,6 +99,7 @@ import { StudentsTab } from './_components/students-tab';
 import { TeachersTab } from './_components/teachers-tab';
 import { MenuTab } from './_components/menu-tab';
 import { MealFeeTab } from './_components/meal-fee-tab';
+import { ExpenseInvoiceTab } from './_components/expense-invoice-tab';
 
 // ---------- Schema validate Dialog "Thêm cơ sở mới" ----------
 const createCampusSchema = z.object({
@@ -116,7 +117,7 @@ interface StatsCardData {
   tone: 'indigo' | 'emerald' | 'amber' | 'sky';
 }
 
-// ---------- Cấu hình các Tab còn lại (chỉ còn 3 tab placeholder) ----------
+// ---------- Cấu hình các Tab còn lại (chỉ còn 2 tab placeholder) ----------
 interface FunctionalTab {
   value: string;
   label: string;
@@ -126,10 +127,10 @@ interface FunctionalTab {
 }
 
 /**
- * Danh sách placeholder cho 3 Tab chưa làm: Tổng quan, Điểm danh, Báo cáo.
- * Các tab Lớp học / Học sinh / Giáo viên / Thực đơn / Học phí (tiền ăn)
- * đã có component riêng trong `_components/`, sẽ được render thẳng vào
- * <TabsContent> tương ứng trong DashboardPage.
+ * Danh sách placeholder cho 2 Tab chưa làm: Tổng quan, Điểm danh.
+ * 6 tab còn lại (Lớp học, Học sinh, Giáo viên, Thực đơn, Học phí/Tiền ăn,
+ * Nhật ký chi tiêu & Hóa đơn) đã có component riêng trong `_components/`,
+ * sẽ được render thẳng vào <TabsContent> tương ứng trong DashboardPage.
  */
 const PLACEHOLDER_TABS: FunctionalTab[] = [
   {
@@ -147,14 +148,6 @@ const PLACEHOLDER_TABS: FunctionalTab[] = [
     description:
       'Theo dõi điểm danh hằng ngày của từng lớp, hỗ trợ đánh dấu nghỉ có phép / không phép và ghi chú của giáo viên.',
     primaryAction: { label: 'Mở bảng điểm danh', icon: <ClipboardCheck className="h-4 w-4" /> },
-  },
-  {
-    value: 'reports',
-    label: 'Báo cáo',
-    icon: <FileBarChart className="h-4 w-4" />,
-    description:
-      'Xuất báo cáo tổng hợp: tỉ lệ chuyên cần, doanh thu theo tháng, tình hình sức khỏe và các chỉ số vận hành khác.',
-    primaryAction: { label: 'Xem báo cáo', icon: <FileBarChart className="h-4 w-4" /> },
   },
 ];
 
@@ -312,7 +305,8 @@ export default function DashboardPage() {
           1-3: Lớp học, Học sinh, Giáo viên (3 tab có logic chi tiết)
           4:   Thực đơn (danh mục món + lịch tuần)
           5:   Học phí & Tiền ăn (đối lưu điểm danh)
-          Còn lại: Tổng quan, Điểm danh, Báo cáo (placeholder) */}
+          6:   Nhật ký chi tiêu & Hóa đơn (sổ chi + blacklist)
+          Còn lại: Tổng quan, Điểm danh (placeholder) */}
       <Tabs defaultValue="classes" className="w-full">
         <TabsList className="flex w-full flex-wrap justify-start gap-1 sm:flex-nowrap sm:overflow-x-auto">
           {/* Tab 1: Lớp học */}
@@ -340,6 +334,11 @@ export default function DashboardPage() {
             <Wallet className="h-4 w-4" />
             <span className="hidden sm:inline">Tiền ăn</span>
           </TabsTrigger>
+          {/* Tab 6: Nhật ký chi tiêu & Hóa đơn */}
+          <TabsTrigger value="reports" className="flex-shrink-0">
+            <FileBarChart className="h-4 w-4" />
+            <span className="hidden sm:inline">Nhật ký</span>
+          </TabsTrigger>
           {/* Các tab còn lại (placeholder) */}
           {PLACEHOLDER_TABS.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} className="flex-shrink-0">
@@ -349,7 +348,7 @@ export default function DashboardPage() {
           ))}
         </TabsList>
 
-        {/* === 5 Tab có logic chi tiết (gắn liền selectedCampusId) === */}
+        {/* === 6 Tab có logic chi tiết (gắn liền selectedCampusId) === */}
         <TabsContent value="classes">
           <ClassesTab campusId={selectedCampusId} />
         </TabsContent>
@@ -364,6 +363,9 @@ export default function DashboardPage() {
         </TabsContent>
         <TabsContent value="tuition">
           <MealFeeTab campusId={selectedCampusId} />
+        </TabsContent>
+        <TabsContent value="reports">
+          <ExpenseInvoiceTab campusId={selectedCampusId} />
         </TabsContent>
 
         {/* === Các tab placeholder === */}
