@@ -122,7 +122,15 @@ export function useDashboardStats(
         next.studentCount = readPaginatedTotal(students.value.data);
       }
       if (classes.status === 'fulfilled' && classes.value?.success) {
-        next.classCount = readArrayLength(classes.value.data);
+        // Backend trả paginated với meta.total — ưu tiên đọc để có số chính xác
+        // (không phụ thuộc limit). Fallback về array.length nếu endpoint cũ
+        // không trả meta (chỉ trả array thuần).
+        const total = classes.value.meta?.total;
+        if (typeof total === 'number') {
+          next.classCount = total;
+        } else {
+          next.classCount = readArrayLength(classes.value.data);
+        }
       }
       if (teachers.status === 'fulfilled' && teachers.value?.success) {
         next.teacherCount = readPaginatedTotal(teachers.value.data);
