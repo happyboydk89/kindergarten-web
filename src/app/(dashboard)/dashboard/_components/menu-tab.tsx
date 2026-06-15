@@ -168,17 +168,21 @@ export function MenuTab({ campusId }: { campusId: string }) {
           weekStart,
         });
         if (cancelled) return;
-        // res.data có thể là DailySchedule[] (flat) hoặc { data: DailySchedule[] } (bọc)
+        // BE mới trả `{ campus, gradeLevel, startDate, endDate, days: [...] }`
+        // với `days[].breakfast`/`lunch`/`snack`/`activities` là CHUỖI TỰ DO
+        // (xem schedule.service.ts BE). Khi có bảng `Dish` riêng, sẽ chuyển sang
+        // dùng `dishIds: string[]`. Tạm thời để trống để tương thích code cũ.
         const payload = res.data as unknown;
-        let list: DailySchedule[] = [];
-        if (Array.isArray(payload)) {
-          list = payload as DailySchedule[];
-        } else if (payload && typeof payload === 'object' && 'data' in payload) {
-          list = (payload as { data: DailySchedule[] }).data ?? [];
-        }
+        const dayEntries: Array<{ date: string }> =
+          payload && typeof payload === 'object' && 'days' in payload
+            ? ((payload as { days: Array<{ date: string }> }).days ?? [])
+            : Array.isArray(payload)
+              ? (payload as Array<{ date: string }>)
+              : [];
+
         const map: Record<string, string[]> = {};
-        for (const s of list) {
-          if (s.date) map[s.date] = s.dishIds ?? [];
+        for (const s of dayEntries) {
+          if (s.date) map[s.date] = [];
         }
         setScheduleMap(map);
       } catch (err) {

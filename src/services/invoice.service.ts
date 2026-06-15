@@ -60,8 +60,11 @@ export interface ParentContact {
 
 export const invoiceService = {
   /**
-   * Lấy danh sách hóa đơn có filter (status, month, year) và phân trang.
-   * GET /api/v1/invoices?status=&month=&year=&page=&limit=
+   * Lấy danh sách hóa đơn có filter (status, month, year, campusId) và phân trang.
+   * GET /api/v1/invoices?campusId=&status=&month=&year=&page=&limit=
+   *
+   * - `campusId` (optional): lọc theo cơ sở.
+   *   Truyền campusId để data chỉ thuộc về campus đang chọn ở Header.
    */
   async list(params?: {
     month?: number;
@@ -69,13 +72,15 @@ export const invoiceService = {
     page?: number;
     limit?: number;
     status?: InvoiceStatus;
-  }): Promise<ApiResponse<InvoiceItem[]>> {
+    campusId?: string;
+  }): Promise<ApiResponse<InvoiceListResponse>> {
     return apiClient.get('/invoices', { params });
   },
 
   /**
-   * Lấy danh sách hóa đơn có phân trang đầy đủ (khi BE trả `{data, meta}`).
-   * GET /api/v1/invoices?status=&month=&year=&page=&limit=
+   * Legacy alias cho code cũ — trả về raw array (không có meta).
+   * Endpoint BE hiện tại (sau refactor) đều trả paginated wrapper,
+   * nên alias này giờ trả về `{ data: InvoiceItem[], meta: ... }` luôn.
    */
   async listPaginated(params?: {
     month?: number;
@@ -83,6 +88,7 @@ export const invoiceService = {
     page?: number;
     limit?: number;
     status?: InvoiceStatus;
+    campusId?: string;
   }): Promise<ApiResponse<InvoiceListResponse>> {
     return apiClient.get('/invoices', { params });
   },
@@ -90,9 +96,16 @@ export const invoiceService = {
   /**
    * Sinh hóa đơn hàng loạt cho 1 tháng.
    * POST /api/v1/invoices/generate
+   * Body: { month, year, campusId? }
+   * - `campusId` (optional): nếu truyền → chỉ tạo cho SV của campus đó.
+   *   Nếu KHÔNG truyền → tạo cho toàn trường (giữ tương thích cũ).
    */
-  async generate(month: number, year: number): Promise<ApiResponse<GenerateInvoiceResponse>> {
-    return apiClient.post('/invoices/generate', { month, year });
+  async generate(
+    month: number,
+    year: number,
+    options: { campusId?: string } = {},
+  ): Promise<ApiResponse<GenerateInvoiceResponse>> {
+    return apiClient.post('/invoices/generate', { month, year, ...options });
   },
 
   /**
@@ -104,10 +117,26 @@ export const invoiceService = {
   },
 
   /**
+   * Lấy danh sách hóa đơn UNPAID của tháng/năm.
+   * GET /api/v1/invoices/unpaid?campusId=&month=&year=
+   * - `campusId` (optional): lọc theo cơ sở.
+   */
+  async listUnpaid(params?: {
+    month?: number;
+    year?: number;
+    campusId?: string;
+  }): Promise<ApiResponse<{
+    filter: { month: number; year: number; campusId?: number };
+    totalUnpaidCount: number;
+    totalUnpaidAmount: number;
+    invoices: InvoiceItem[];
+  }>> {
+    return apiClient.get('/invoices/unpaid', { params });
+  },
+
+  /**
    * Lấy danh sách phụ huynh của 1 học sinh (dùng khi invoice không include parent phone).
    * GET /api/v1/parents?studentId=...
-   *
-   * Theo CONTEXT mục 5: có route /api/v1/parents — chi tiết query tùy BE.
    */
   async getParentsByStudent(studentId: string): Promise<ApiResponse<ParentContact[]>> {
     return apiClient.get('/parents', { params: { studentId } });

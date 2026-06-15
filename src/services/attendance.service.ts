@@ -30,11 +30,43 @@ export interface StudentAttendanceRangeResponse {
   meta: PaginationMeta;
 }
 
+/**
+ * Tổng quan điểm danh của 1 campus trong 1 ngày (cho PRINCIPAL/STAFF/TEACHER).
+ * Trả về danh sách lớp + sĩ số + số HS có mặt/nghỉ phép/nghỉ KP.
+ */
+export interface CampusAttendanceOverview {
+  campus: { id: number; name: string };
+  date: string;
+  classes: Array<{
+    classId: number;
+    className: string;
+    gradeLevel: string;
+    teacherNames: string[];
+    totalStudents: number;
+    present: number;
+    absentPlanned: number;
+    absentUnplanned: number;
+    attendanceMarked: boolean;
+  }>;
+  totals: {
+    totalStudents: number;
+    present: number;
+    absentPlanned: number;
+    absentUnplanned: number;
+    classesMarked: number;
+    totalClasses: number;
+  };
+}
+
 export interface MarkAttendancePayload {
+  classId: string;
+  date?: string;
   records: Array<{
     studentId: string;
-    date: string;
+    date?: string;
     status: AttendanceStatus;
+    hasBreakfast?: boolean;
+    hasLunch?: boolean;
     teacherNote?: string;
   }>;
 }
@@ -57,6 +89,22 @@ export const attendanceService = {
   },
 
   /**
+   * Tổng quan điểm danh của 1 campus trong 1 ngày.
+   * GET /api/v1/campuses/:campusId/attendance/overview?date=YYYY-MM-DD
+   * - PRINCIPAL/STAFF: thấy tất cả lớp trong campus.
+   * - TEACHER: chỉ lớp mình phụ trách.
+   * Dùng cho trang /dashboard/attendance overview (nếu cần sau này).
+   */
+  async getCampusOverview(
+    campusId: string,
+    date: string,
+  ): Promise<ApiResponse<CampusAttendanceOverview>> {
+    return apiClient.get(`/campuses/${campusId}/attendance/overview`, {
+      params: { date },
+    });
+  },
+
+  /**
    * Lấy điểm danh của 1 học sinh trong khoảng ngày [fromDate, toDate] (YYYY-MM-DD).
    * GET /api/v1/attendance/student/:studentId?fromDate=&toDate=&page=&limit=
    * (Phân trang theo NGÀY theo CONTEXT mục 4).
@@ -69,8 +117,9 @@ export const attendanceService = {
   },
 
   /**
-   * Ghi nhận điểm danh.
+   * Ghi nhận điểm danh hàng loạt cho 1 lớp.
    * POST /api/v1/attendance
+   * Body: { classId, date?, records: [{ studentId, status, hasBreakfast?, hasLunch?, teacherNote? }] }
    */
   async markAttendance(payload: MarkAttendancePayload): Promise<ApiResponse<null>> {
     return apiClient.post('/attendance', payload);
