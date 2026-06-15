@@ -50,15 +50,14 @@ import {
   GraduationCap,
   Loader2,
   Plus,
-  Users,
   Wallet,
   LayoutDashboard,
   UserCog,
   ClipboardCheck,
   UtensilsCrossed,
   FileBarChart,
-  BookOpen,
   School,
+  BookOpen,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -95,6 +94,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuth } from '@/hooks/use-auth';
 import { campusService, type Campus, type CreateCampusPayload } from '@/services/campus.service';
 import { cn, formatVND } from '@/lib/utils';
+import { ClassesTab } from './_components/classes-tab';
+import { StudentsTab } from './_components/students-tab';
+import { TeachersTab } from './_components/teachers-tab';
 
 // ---------- Schema validate Dialog "Thêm cơ sở mới" ----------
 const createCampusSchema = z.object({
@@ -112,7 +114,7 @@ interface StatsCardData {
   tone: 'indigo' | 'emerald' | 'amber' | 'sky';
 }
 
-// ---------- Cấu hình 6 Tab chức năng (placeholder) ----------
+// ---------- Cấu hình 7 Tab (3 tab đầu render component chuyên biệt, 4 tab còn lại là placeholder) ----------
 interface FunctionalTab {
   value: string;
   label: string;
@@ -121,7 +123,12 @@ interface FunctionalTab {
   primaryAction: { label: string; icon: React.ReactNode };
 }
 
-const FUNCTIONAL_TABS: FunctionalTab[] = [
+/**
+ * Danh sách placeholder cho 4 Tab chưa làm: Tổng quan, Điểm danh, Thực đơn, Báo cáo.
+ * 3 Tab Lớp học / Học sinh / Giáo viên đã có component riêng trong `_components/`,
+ * sẽ được render thẳng vào <TabsContent> tương ứng trong DashboardPage.
+ */
+const PLACEHOLDER_TABS: FunctionalTab[] = [
   {
     value: 'overview',
     label: 'Tổng quan',
@@ -129,14 +136,6 @@ const FUNCTIONAL_TABS: FunctionalTab[] = [
     description:
       'Bảng điều khiển tổng hợp số liệu vận hành của cơ sở đang chọn: học sinh, lớp, giáo viên, doanh thu học phí và các chỉ số nhanh khác.',
     primaryAction: { label: 'Xem chi tiết', icon: <LayoutDashboard className="h-4 w-4" /> },
-  },
-  {
-    value: 'students',
-    label: 'Học sinh',
-    icon: <GraduationCap className="h-4 w-4" />,
-    description:
-      'Quản lý hồ sơ học sinh: tiếp nhận, phân lớp, cập nhật thông tin phụ huynh và tình trạng học tập (Đang học / Đã đặt chỗ / Tốt nghiệp).',
-    primaryAction: { label: 'Quản lý học sinh', icon: <GraduationCap className="h-4 w-4" /> },
   },
   {
     value: 'attendance',
@@ -321,10 +320,28 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* ================== TABS ĐIỀU HƯỚNG CHỨC NĂNG ================== */}
-      <Tabs defaultValue="overview" className="w-full">
+      {/* ================== TABS ĐIỀU HƯỚNG CHỨC NĂNG ==================
+          Thứ tự tab: Lớp học, Học sinh, Giáo viên (3 tab có logic chi tiết) →
+          5 tab còn lại (Tổng quan, Điểm danh, Thực đơn, Học phí, Báo cáo) hiển thị placeholder. */}
+      <Tabs defaultValue="classes" className="w-full">
         <TabsList className="flex w-full flex-wrap justify-start gap-1 sm:flex-nowrap sm:overflow-x-auto">
-          {FUNCTIONAL_TABS.map((tab) => (
+          {/* Tab 1: Lớp học */}
+          <TabsTrigger value="classes" className="flex-shrink-0">
+            <School className="h-4 w-4" />
+            <span className="hidden sm:inline">Lớp học</span>
+          </TabsTrigger>
+          {/* Tab 2: Học sinh */}
+          <TabsTrigger value="students" className="flex-shrink-0">
+            <GraduationCap className="h-4 w-4" />
+            <span className="hidden sm:inline">Học sinh</span>
+          </TabsTrigger>
+          {/* Tab 3: Giáo viên */}
+          <TabsTrigger value="teachers" className="flex-shrink-0">
+            <UserCog className="h-4 w-4" />
+            <span className="hidden sm:inline">Giáo viên</span>
+          </TabsTrigger>
+          {/* Các tab còn lại (placeholder) */}
+          {PLACEHOLDER_TABS.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} className="flex-shrink-0">
               {tab.icon}
               <span className="hidden sm:inline">{tab.label}</span>
@@ -332,7 +349,19 @@ export default function DashboardPage() {
           ))}
         </TabsList>
 
-        {FUNCTIONAL_TABS.map((tab) => (
+        {/* === 3 Tab có logic chi tiết (gắn liền selectedCampusId) === */}
+        <TabsContent value="classes">
+          <ClassesTab campusId={selectedCampusId} />
+        </TabsContent>
+        <TabsContent value="students">
+          <StudentsTab campusId={selectedCampusId} />
+        </TabsContent>
+        <TabsContent value="teachers">
+          <TeachersTab campusId={selectedCampusId} />
+        </TabsContent>
+
+        {/* === Các tab placeholder === */}
+        {PLACEHOLDER_TABS.map((tab) => (
           <TabsContent key={tab.value} value={tab.value}>
             <TabPlaceholder tab={tab} campusName={currentCampus?.name} />
           </TabsContent>
