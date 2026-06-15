@@ -6,13 +6,15 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
+  useRef,
   type ReactNode,
 } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { authService } from '@/services/auth.service';
 import type { AuthUser } from '@/services/auth.service';
 import type { UserRole } from '@/types';
-import { setRoleCookie, clearRoleCookie, getRoleHomePath } from '@/lib/role-utils';
+import { setRoleCookie, clearRoleCookie } from '@/lib/role-utils';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -30,19 +32,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
+  const checkedRef = useRef(false);
 
   useEffect(() => {
+    if (checkedRef.current) return;
+    checkedRef.current = true;
+
     if (pathname === '/login') {
       setIsLoading(false);
       return;
     }
 
+    setIsLoading(true);
+
     authService
       .getMe()
       .then((res) => {
-        if (res.success && res.data) {
-          setUser(res.data.user);
-          setRoleCookie(res.data.user.role);
+        const userData = extractUser(res.data);
+        if (userData) {
+          setUser(userData);
+          setRoleCookie(userData.role);
         }
       })
       .catch(() => {
@@ -53,19 +62,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
   }, [pathname]);
 
+  function extractUser(data: unknown): AuthUser | null {
+    if (!data || typeof data !== 'object') return null;
+    if ('user' in data && data.user !== null && typeof data.user === 'object') {
+      return data.user as AuthUser;
+    }
+    if ('id' in data && 'role' in data) {
+      return data as AuthUser;
+    }
+    return null;
+  }
+
   const login = useCallback(
     async (phoneNumber: string, password: string): Promise<AuthUser> => {
       const res = await authService.login(phoneNumber, password);
-      if (res.success) {
-        const meRes = await authService.getMe();
-        if (meRes.success && meRes.data) {
-          setUser(meRes.data.user);
-          setRoleCookie(meRes.data.user.role);
-          return meRes.data.user;
-        }
+      if (!res.success) {
+        throw new Error(res.message ?? 'Đăng nhập thất bại');
+      }
+
+      const meRes = await authService.getMe();
+      const userData = extractUser(meRes.data);
+
+      if (!userData) {
         throw new Error('Không thể lấy thông tin người dùng sau đăng nhập');
       }
-      throw new Error(res.message ?? 'Đăng nhập thất bại');
+
+      setUser(userData);
+      setRoleCookie(userData.role);
+      return userData;
     },
     [],
   );
@@ -80,14 +104,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [router]);
 
-  const value: AuthContextValue = {
-    user,
-    role: user?.role ?? null,
-    isLoading,
-    isAuthenticated: user !== null,
-    login,
-    logout,
-  };
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      user,
+      role: user?.role ?? null,
+      isLoading,
+      isAuthenticated: user !== null,
+      login,
+      logout,
+    }),
+    [user, isLoading, login, logout],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
