@@ -148,11 +148,8 @@ export function ClassDetailTab({
       if (records.length > 0) {
         setStudents(
           records.map((r) => ({
-            id: r.studentId,
-            code: r.studentCode,
+            id: Number(r.studentId),
             fullName: r.studentName,
-            firstName: '',
-            lastName: '',
             status: 'STUDYING' as const,
           })),
         );
@@ -501,7 +498,7 @@ export function ClassDetailTab({
                       <TableCell className="text-center text-sm text-muted-foreground">
                         {idx + 1}
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{s.code ?? '—'}</TableCell>
+                      <TableCell className="font-mono text-xs text-slate-500">#{s.id}</TableCell>
                       <TableCell className="font-medium text-slate-800">{s.fullName}</TableCell>
                       <TableCell className="text-slate-600">{s.nickname ?? '—'}</TableCell>
                       {isPrincipal && (

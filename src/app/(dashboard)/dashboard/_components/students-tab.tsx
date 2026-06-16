@@ -75,6 +75,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import {
   studentService,
   type StudentBrief,
+  type StudentInfo,
   type CreateStudentPayload,
 } from '@/services/student.service';
 import { classService, type ClassInfo } from '@/services/class.service';
@@ -126,17 +127,12 @@ export function StudentsTab({ campusId }: { campusId: string }) {
       try {
         const res = await studentService.list({ campusId, page, limit: PAGE_SIZE });
         if (cancelled) return;
-        if (res?.success && res.data) {
-          // res.data có thể là mảng (nếu BE trả phẳng) hoặc { data, meta } (nếu BE bọc paginated)
-          const payload = res.data as unknown;
-          if (Array.isArray(payload)) {
-            setStudents(payload as StudentBrief[]);
-            setMeta((m) => ({ ...m, page, total: payload.length, totalPages: 1 }));
-          } else {
-            const p = payload as { data: StudentBrief[]; meta?: typeof meta };
-            setStudents(p.data ?? []);
-            if (p.meta) setMeta(p.meta);
-          }
+        if (res?.success) {
+          // BE trả về `data: StudentBrief[]` (axios interceptor đã strip wrapper).
+          // `res.meta` ở level ApiResponse (cùng cấp với `data`).
+          const items = Array.isArray(res.data) ? res.data : [];
+          setStudents(items);
+          if (res.meta) setMeta(res.meta);
         }
       } catch (err) {
         if (!cancelled) {
@@ -157,15 +153,10 @@ export function StudentsTab({ campusId }: { campusId: string }) {
     if (!campusId) return;
     try {
       const res = await studentService.list({ campusId, page, limit: PAGE_SIZE });
-      if (res?.success && res.data) {
-        const payload = res.data as unknown;
-        if (Array.isArray(payload)) {
-          setStudents(payload as StudentBrief[]);
-        } else {
-          const p = payload as { data: StudentBrief[]; meta?: typeof meta };
-          setStudents(p.data ?? []);
-          if (p.meta) setMeta(p.meta);
-        }
+      if (res?.success) {
+        const items = Array.isArray(res.data) ? res.data : [];
+        setStudents(items);
+        if (res.meta) setMeta(res.meta);
       }
     } catch {
       /* silent */
@@ -220,11 +211,23 @@ export function StudentsTab({ campusId }: { campusId: string }) {
                   <TableBody>
                     {students.map((s) => (
                       <TableRow key={s.id}>
-                        <TableCell className="font-mono text-xs">{s.code}</TableCell>
+                        <TableCell className="font-mono text-xs text-slate-500">
+                          #{s.id}
+                        </TableCell>
                         <TableCell className="font-medium text-slate-800">
                           {s.fullName}
+                          {s.nickname && (
+                            <span className="ml-1 text-xs text-slate-400">
+                              ({s.nickname})
+                            </span>
+                          )}
                         </TableCell>
-                        <TableCell>{s.className ?? '—'}</TableCell>
+                        <TableCell>
+                          {(() => {
+                            const klass = (s as StudentInfo).class;
+                            return klass?.name ?? s.className ?? '—';
+                          })()}
+                        </TableCell>
                         <TableCell>
                           <Badge variant="secondary">
                             {STUDENT_STATUS_LABELS[s.status] ?? s.status}
@@ -393,17 +396,25 @@ function CreateStudentDialog({
   const onSubmit = async (values: CreateStudentFormValues) => {
     setIsSubmitting(true);
     try {
+      // classId từ Form là string (Select value), BE cần number.
+      const classIdNum = Number(values.classId);
+      if (!Number.isInteger(classIdNum) || classIdNum <= 0) {
+        toast.error('Vui lòng chọn lớp hợp lệ');
+        return;
+      }
       const payload: CreateStudentPayload = {
         firstName: values.firstName.trim(),
         lastName: values.lastName.trim(),
         dateOfBirth: values.dateOfBirth,
         gender: values.gender,
-        classId: values.classId,
+        classId: classIdNum,
         status: 'STUDYING',
       };
       const res = await studentService.create(payload);
       if (res?.success && res.data) {
-        toast.success(`Đã tiếp nhận học sinh ${res.data.fullName}`);
+        toast.success(`Đã tiếp nhận học sinh "${res.data.fullName}" vào lớp.`);
+        // Reset form TRƯỚC khi đóng dialog để tránh lần mở sau còn state cũ.
+        form.reset({ firstName: '', lastName: '', dateOfBirth: '', gender: '', classId: '' });
         await onCreated();
         onOpenChange(false);
       } else {
@@ -411,8 +422,12 @@ function CreateStudentDialog({
       }
     } catch (err) {
       // Lấy thông báo lỗi validation từ interceptor (status 422) nếu có
+      const fieldErrors = (err as { fieldErrors?: Record<string, string> })?.fieldErrors;
+      const firstFieldError = fieldErrors
+        ? Object.values(fieldErrors).find(Boolean) ?? null
+        : null;
       const message =
-        (err as { fieldErrors?: Record<string, string> })?.fieldErrors?.dateOfBirth ??
+        firstFieldError ??
         (err instanceof Error ? err.message : 'Có lỗi xảy ra khi tiếp nhận học sinh');
       toast.error(message);
     } finally {

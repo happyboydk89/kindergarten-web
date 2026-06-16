@@ -70,7 +70,6 @@ import { mealFeeService } from '@/services/meal-fee.service';
 import {
   studentService,
   type StudentBrief,
-  type StudentListResponse,
 } from '@/services/student.service';
 import {
   attendanceService,
@@ -161,15 +160,8 @@ export function MealFeeTab({ campusId }: { campusId: string }) {
           setRows([]);
           return;
         }
-        // res.data có thể là StudentListResponse (bọc) hoặc StudentBrief[] (phẳng)
-        const payload = listRes.data as unknown;
-        let students: StudentBrief[] = [];
-        if (Array.isArray(payload)) {
-          students = payload as StudentBrief[];
-        } else {
-          const p = payload as StudentListResponse;
-          students = p.data ?? [];
-        }
+        // res.data là StudentBrief[] trực tiếp (axios interceptor đã strip wrapper).
+        const students: StudentBrief[] = Array.isArray(listRes.data) ? listRes.data : [];
 
         // 2. Lấy tất cả ngày trong tháng
         const dates = getDatesInMonth(month);
@@ -185,7 +177,7 @@ export function MealFeeTab({ campusId }: { campusId: string }) {
         const results: StudentReconciliation[] = [];
         for (const s of students) {
           if (cancelled) return;
-          const attRes = await attendanceService.getStudentAttendance(s.id, {
+          const attRes = await attendanceService.getStudentAttendance(String(s.id), {
             fromDate,
             toDate,
             limit: 31, // 1 tháng tối đa 31 ngày
@@ -373,7 +365,7 @@ export function MealFeeTab({ campusId }: { campusId: string }) {
                   <TableBody>
                     {rows.map((r) => (
                       <TableRow key={r.student.id}>
-                        <TableCell className="font-mono text-xs">{r.student.code}</TableCell>
+                        <TableCell className="font-mono text-xs text-slate-500">#{r.student.id}</TableCell>
                         <TableCell className="font-medium text-slate-800">
                           {r.student.fullName}
                         </TableCell>
@@ -580,7 +572,7 @@ function computeReconciliation(
   let unplannedDays = 0;
   for (const day of days) {
     // Mỗi day có thể chứa nhiều records (cho nhiều HS) → chỉ lấy record của HS hiện tại
-    const myRec = day.records.find((r) => r.studentId === student.id);
+    const myRec = day.records.find((r) => Number(r.studentId) === student.id);
     if (!myRec) continue;
     switch (myRec.status as AttendanceStatus) {
       case 'PRESENT':
