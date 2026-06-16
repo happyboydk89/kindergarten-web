@@ -85,6 +85,7 @@ import {
 } from '@/components/ui/select';
 
 import { classService, type ClassInfo, type ClassPayload } from '@/services/class.service';
+import { useAuth } from '@/hooks/use-auth';
 import { attendanceService, type ClassAttendanceDay } from '@/services/attendance.service';
 import type { GradeLevel } from '@/types';
 import { GRADE_LEVELS, GRADE_LEVEL_LABELS } from '@/types';
@@ -124,6 +125,9 @@ function getVietnamToday(): string {
 
 export function ClassesTab({ campusId }: { campusId: string }) {
   const router = useRouter();
+  const { role } = useAuth();
+  // TEACHER chỉ xem danh sách lớp mình dạy (BE đã filter theo `ClassTeacher`).
+  const isTeacher = role === 'TEACHER';
 
   // ============== STATE ==============
   const [classes, setClasses] = useState<ClassInfo[]>([]);
@@ -237,16 +241,20 @@ export function ClassesTab({ campusId }: { campusId: string }) {
             <div>
               <CardTitle className="flex items-center gap-2 text-slate-800">
                 <School className="h-5 w-5 text-indigo-600" />
-                Danh sách lớp học
+                {isTeacher ? 'Lớp học tôi đang phụ trách' : 'Danh sách lớp học'}
               </CardTitle>
               <CardDescription>
-                Quản lý các lớp đang hoạt động tại cơ sở. Lọc tự động theo cơ sở đang chọn.
+                {isTeacher
+                  ? 'Chỉ hiển thị các lớp bạn được phân công giảng dạy.'
+                  : 'Quản lý các lớp đang hoạt động tại cơ sở. Lọc tự động theo cơ sở đang chọn.'}
               </CardDescription>
             </div>
-            <Button onClick={openCreate} disabled={!campusId}>
-              <Plus className="h-4 w-4" />
-              Thêm lớp
-            </Button>
+            {!isTeacher && (
+              <Button onClick={openCreate} disabled={!campusId}>
+                <Plus className="h-4 w-4" />
+                Thêm lớp
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -313,22 +321,26 @@ export function ClassesTab({ campusId }: { campusId: string }) {
                           >
                             <Eye className="h-4 w-4 text-sky-600" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Sửa lớp"
-                            onClick={() => openEdit(c)}
-                          >
-                            <Pencil className="h-4 w-4 text-indigo-600" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Xóa lớp"
-                            onClick={() => setDeletingId(c.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-rose-600" />
-                          </Button>
+                          {!isTeacher && (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Sửa lớp"
+                                onClick={() => openEdit(c)}
+                              >
+                                <Pencil className="h-4 w-4 text-indigo-600" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="Xóa lớp"
+                                onClick={() => setDeletingId(c.id)}
+                              >
+                                <Trash2 className="h-4 w-4 text-rose-600" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

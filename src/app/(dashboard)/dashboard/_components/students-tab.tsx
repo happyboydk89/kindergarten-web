@@ -79,6 +79,7 @@ import {
   type CreateStudentPayload,
 } from '@/services/student.service';
 import { classService, type ClassInfo } from '@/services/class.service';
+import { useAuth } from '@/hooks/use-auth';
 import type { GradeLevel } from '@/types';
 import { GRADE_LEVEL_LABELS, STUDENT_STATUS_LABELS } from '@/types';
 
@@ -104,6 +105,10 @@ const PAGE_SIZE = 10;
 
 export function StudentsTab({ campusId }: { campusId: string }) {
   // ============== STATE ==============
+  const { role, user } = useAuth();
+  // TEACHER chỉ xem danh sách HS lớp mình dạy, không tiếp nhận HS mới.
+  const isTeacher = role === 'TEACHER';
+
   const [students, setStudents] = useState<StudentBrief[]>([]);
   const [meta, setMeta] = useState({ page: 1, limit: PAGE_SIZE, total: 0, totalPages: 1 });
   const [page, setPage] = useState(1);
@@ -171,18 +176,22 @@ export function StudentsTab({ campusId }: { campusId: string }) {
             <div>
               <CardTitle className="flex items-center gap-2 text-slate-800">
                 <GraduationCap className="h-5 w-5 text-indigo-600" />
-                Danh sách học sinh
+                {isTeacher ? 'Danh sách học sinh lớp của tôi' : 'Danh sách học sinh'}
               </CardTitle>
               <CardDescription>
                 {campusId
-                  ? `Tổng cộng ${meta.total} học sinh tại cơ sở đang chọn.`
+                  ? isTeacher
+                    ? `Bao gồm ${meta.total} học sinh thuộc các lớp bạn đang phụ trách.`
+                    : `Tổng cộng ${meta.total} học sinh tại cơ sở đang chọn.`
                   : 'Vui lòng chọn cơ sở để xem danh sách học sinh.'}
               </CardDescription>
             </div>
-            <Button onClick={() => setCreateOpen(true)} disabled={!campusId}>
-              <UserPlus className="h-4 w-4" />
-              Tiếp nhận học sinh
-            </Button>
+            {!isTeacher && (
+              <Button onClick={() => setCreateOpen(true)} disabled={!campusId}>
+                <UserPlus className="h-4 w-4" />
+                Tiếp nhận học sinh
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>

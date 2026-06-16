@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/select';
 
 import { campusService, type Campus } from '@/services/campus.service';
+import { useAuth } from '@/hooks/use-auth';
 import { CreateCampusDialog } from './create-campus-dialog';
 
 const STORAGE_KEY = 'kindergarten.selectedCampusId';
@@ -136,7 +137,11 @@ export function DashboardHeader() {
   const router = useRouter();
   const { campuses, selectedCampusId, setSelectedCampusId, isLoading, refreshCampuses } =
     useSelectedCampus();
+  const { role } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
+
+  // TEACHER không có quyền tạo campus (chỉ xem + điểm danh lớp mình).
+  const canCreateCampus = role !== 'TEACHER';
 
   const handleCreated = useCallback(
     (c: Campus) => {
@@ -190,7 +195,7 @@ export function DashboardHeader() {
                     ))}
                   </SelectContent>
                 </Select>
-              ) : (
+              ) : canCreateCampus ? (
                 <button
                   onClick={() => setCreateOpen(true)}
                   className="flex h-9 w-full items-center gap-2 rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm text-slate-600 hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-700"
@@ -198,13 +203,20 @@ export function DashboardHeader() {
                   <Building2 className="h-4 w-4 shrink-0" />
                   <span className="truncate">Chưa có cơ sở — tạo ngay</span>
                 </button>
+              ) : (
+                <div className="flex h-9 w-full items-center gap-2 rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 text-sm text-slate-500">
+                  <Building2 className="h-4 w-4 shrink-0" />
+                  <span className="truncate">Bạn chưa được phân công cơ sở</span>
+                </div>
               )}
             </div>
 
-            <Button onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Thêm cơ sở
-            </Button>
+            {canCreateCampus && (
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Thêm cơ sở
+              </Button>
+            )}
 
             <Button
               variant="outline"
