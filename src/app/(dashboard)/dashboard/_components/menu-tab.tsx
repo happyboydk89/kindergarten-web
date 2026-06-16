@@ -5,21 +5,21 @@
  * TAB 4 — QUẢN LÝ THỰC ĐƠN DINH DƯỠNG
  * =====================================================================================
  *
- * Phạm vi:
- *   1. Danh mục món ăn (CRUD nhanh):
- *      - GET /api/v1/dishes?campusId=...
- *      - POST /api/v1/dishes  (Tên món, thành phần dưỡng chất)
- *   2. Lịch tuần (T2..T6 — Thứ 7 + CN mặc định không có thực đơn):
- *      - Chọn Khối + 1 tuần (T2 mặc định = tuần chứa hôm nay).
- *      - GET /api/v1/schedules/weekly?campusId=&gradeLevel=&weekStart=YYYY-MM-DD
- *      - Ở mỗi ngày, gán/bỏ món ăn bằng cách toggle checkbox.
- *      - Nút "Lưu lịch tuần" → POST /api/v1/schedules/bulk (upsert).
+ * Layout 2 sub-tab (Tabs từ shadcn):
  *
- * Quy tắc cứng (đã tuân thủ):
- *   - Mọi date đều là chuỗi `YYYY-MM-DD`, KHÔNG dùng `new Date()` để format.
- *   - apiClient (withCredentials + baseURL tương đối).
- *   - Luôn check `res?.success && res.data` trước khi dùng.
- *   - Submit button có loading + disabled.
+ * 1) THỰC ĐƠN TUẦN (mặc định):
+ *    - Bảng calendar table 7 cột (T2..CN) × 3 hàng (Sáng / Trưa / Xế).
+ *    - Mỗi ô = dropdown chọn món (filter theo `mealType`).
+ *    - Chọn cả tuần rồi bấm "Lưu thực đơn tuần" — giống sổ menu.
+ *
+ * 2) DANH SÁCH MÓN ĂN:
+ *    - CRUD nhanh món ăn (tên + mealType + ingredients + 4 ô dinh dưỡng optional).
+ *    - Click từng dòng để sửa, có nút xoá.
+ *
+ * Quy tắc cứng:
+ *   - Tất cả field dinh dưỡng (calories/protein/carbs/fat) + ingredients đều OPTIONAL.
+ *   - Mọi date là chuỗi `YYYY-MM-DD`, không qua Date().
+ *   - apiClient (withCredentials + baseURL relative).
  * =====================================================================================
  */
 
@@ -34,6 +34,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  Pencil,
   Plus,
   Save,
   Trash2,
@@ -63,8 +64,15 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
+import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -79,87 +87,94 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
-
-import { dishService, type Dish, type CreateDishPayload } from '@/services/dish.service';
 import {
-  scheduleService,
-  type BulkSchedulesPayload,
-  type DailySchedule,
-} from '@/services/schedule.service';
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+
+import {
+  dishService,
+  type Dish,
+  type DishMealType,
+  type CreateDishPayload,
+  type UpdateDishPayload,
+  DISH_MEAL_TYPE_LABELS,
+  DISH_MEAL_TYPE_ORDER,
+} from '@/services/dish.service';
+import { scheduleService } from '@/services/schedule.service';
 import type { GradeLevel } from '@/types';
 import { GRADE_LEVELS, GRADE_LEVEL_LABELS } from '@/types';
 import {
   WEEKDAY_LABELS_VN,
   addDays,
-  diffDays,
   formatVNDate,
   getISODayOfWeek,
   getVietnamToday,
   startOfWeek,
 } from '@/lib/date-utils';
 
-// ---------- Schema validate Form "Thêm món ăn" ----------
-const createDishSchema = z.object({
-  name: z.string().min(2, 'Tên món phải có ít nhất 2 ký tự').max(100, 'Tên món quá dài'),
-  nutrients: z.string().max(500, 'Mô tả dưỡng chất quá dài').optional(),
-});
-type CreateDishFormValues = z.infer<typeof createDishSchema>;
+// =====================================================================================
+// SUB-TAB 1: Thực đơn tuần
+// =====================================================================================
 
-/** Chỉ số 0..4 cho 5 ngày làm việc (T2..T6). */
-const WORKING_DAY_ISOS = [1, 2, 3, 4, 5] as const;
+const WEEK_DAY_ISOS = [1, 2, 3, 4, 5, 6, 7] as const; // T2..CN
 
-export function MenuTab({ campusId }: { campusId: string }) {
-  // ============== STATE: danh mục món ==============
-  const [dishes, setDishes] = useState<Dish[]>([]);
-  const [isLoadingDishes, setIsLoadingDishes] = useState(false);
-  const [createDishOpen, setCreateDishOpen] = useState(false);
-  const [deletingDishId, setDeletingDishId] = useState<string | null>(null);
-  const [isDeletingDish, setIsDeletingDish] = useState(false);
+/**
+ * Map YYYY-MM-DD → { breakfastDishId, lunchDishId, snackDishId }.
+ * Tất cả các field đều optional (null = không gán món).
+ */
+type MenuDraft = Record<string, { breakfastDishId: number | null; lunchDishId: number | null; snackDishId: number | null }>;
 
-  // ============== STATE: lịch tuần ==============
+function WeekMenuEditor({ campusId }: { campusId: string }) {
+  // ============== STATE ==============
   const [gradeLevel, setGradeLevel] = useState<GradeLevel | ''>('');
   const [weekStart, setWeekStart] = useState<string>(startOfWeek(getVietnamToday()));
-  const [scheduleMap, setScheduleMap] = useState<Record<string, string[]>>({});
+  const [dishes, setDishes] = useState<Dish[]>([]);
+  const [menu, setMenu] = useState<MenuDraft>({});
+  const [isLoadingDishes, setIsLoadingDishes] = useState(false);
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
-  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
-  // ============== EFFECT: load dishes ==============
+  // ============== EFFECT: load dishes theo campus ==============
   useEffect(() => {
     if (!campusId) {
       setDishes([]);
       return;
     }
     let cancelled = false;
-    async function load() {
+    (async () => {
       setIsLoadingDishes(true);
       try {
-        const res = await dishService.list({ campusId });
+        const res = await dishService.list({ campusId, limit: 500 });
         if (!cancelled && res?.success && Array.isArray(res.data)) {
           setDishes(res.data);
         }
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải danh mục món');
+          toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách món');
         }
       } finally {
         if (!cancelled) setIsLoadingDishes(false);
       }
-    }
-    load();
+    })();
     return () => {
       cancelled = true;
     };
   }, [campusId]);
 
-  // ============== EFFECT: load schedule (khi đổi campus/khối/tuần) ==============
+  // ============== EFFECT: load schedule tuần ==============
   useEffect(() => {
     if (!campusId || !gradeLevel) {
-      setScheduleMap({});
+      setMenu({});
       return;
     }
     let cancelled = false;
-    async function load() {
+    (async () => {
       setIsLoadingSchedule(true);
       try {
         const res = await scheduleService.getWeekly({
@@ -168,199 +183,126 @@ export function MenuTab({ campusId }: { campusId: string }) {
           weekStart,
         });
         if (cancelled) return;
-        // BE mới trả `{ campus, gradeLevel, startDate, endDate, days: [...] }`
-        // với `days[].breakfast`/`lunch`/`snack`/`activities` là CHUỖI TỰ DO
-        // (xem schedule.service.ts BE). Khi có bảng `Dish` riêng, sẽ chuyển sang
-        // dùng `dishIds: string[]`. Tạm thời để trống để tương thích code cũ.
-        const payload = res.data as unknown;
-        const dayEntries: Array<{ date: string }> =
-          payload && typeof payload === 'object' && 'days' in payload
-            ? ((payload as { days: Array<{ date: string }> }).days ?? [])
-            : Array.isArray(payload)
-              ? (payload as Array<{ date: string }>)
-              : [];
-
-        const map: Record<string, string[]> = {};
-        for (const s of dayEntries) {
-          if (s.date) map[s.date] = [];
+        const data = res.data;
+        const next: MenuDraft = {};
+        if (data && Array.isArray(data.days)) {
+          for (const d of data.days) {
+            if (!d.date) continue;
+            next[d.date] = {
+              breakfastDishId: d.breakfastDishId ?? null,
+              lunchDishId: d.lunchDishId ?? null,
+              snackDishId: d.snackDishId ?? null,
+            };
+          }
         }
-        setScheduleMap(map);
+        setMenu(next);
+        setHasUnsavedChanges(false);
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải lịch tuần');
+          toast.error(err instanceof Error ? err.message : 'Không thể tải thực đơn tuần');
         }
       } finally {
         if (!cancelled) setIsLoadingSchedule(false);
       }
-    }
-    load();
+    })();
     return () => {
       cancelled = true;
     };
   }, [campusId, gradeLevel, weekStart]);
 
-  // ============== CALLBACK: thêm món mới ==============
-  const handleDishCreated = useCallback((d: Dish) => {
-    setDishes((prev) => [...prev, d]);
-  }, []);
+  // ============== COMPUTED: 7 ngày trong tuần ==============
+  const weekDays = useMemo(
+    () => WEEK_DAY_ISOS.map((iso) => addDays(weekStart, iso - 1)),
+    [weekStart],
+  );
 
-  // ============== CALLBACK: xóa món ==============
-  const handleDeleteDish = useCallback(async () => {
-    if (!deletingDishId) return;
-    setIsDeletingDish(true);
-    try {
-      const res = await dishService.remove(deletingDishId);
-      if (res?.success) {
-        toast.success('Đã xóa món ăn');
-        setDishes((prev) => prev.filter((d) => d.id !== deletingDishId));
-        // Đồng thời loại bỏ món này khỏi scheduleMap (nếu có)
-        setScheduleMap((prev) => {
-          const next: Record<string, string[]> = {};
-          for (const [date, ids] of Object.entries(prev)) {
-            next[date] = ids.filter((id) => id !== deletingDishId);
-          }
-          return next;
-        });
-      } else {
-        toast.error(res?.message ?? 'Xóa món thất bại');
+  // ============== COMPUTED: dishes theo mealType ==============
+  const dishesByMealType = useMemo(() => {
+    const map: Record<DishMealType, Dish[]> = {
+      BREAKFAST: [],
+      LUNCH: [],
+      SNACK: [],
+    };
+    for (const d of dishes) {
+      if (d.isActive !== false && map[d.mealType]) {
+        map[d.mealType].push(d);
       }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Xóa món thất bại');
-    } finally {
-      setIsDeletingDish(false);
-      setDeletingDishId(null);
     }
-  }, [deletingDishId]);
+    return map;
+  }, [dishes]);
 
-  // ============== CALLBACK: toggle 1 món trong 1 ngày ==============
-  const toggleDishInDay = useCallback((date: string, dishId: string) => {
-    setScheduleMap((prev) => {
-      const current = prev[date] ?? [];
-      const next = current.includes(dishId)
-        ? current.filter((id) => id !== dishId)
-        : [...current, dishId];
-      return { ...prev, [date]: next };
-    });
-  }, []);
+  // ============== CALLBACK: set 1 món cho 1 ngày ==============
+  const setMenuItem = useCallback(
+    (date: string, mealType: DishMealType, dishId: number | null) => {
+      setMenu((prev) => {
+        const current = prev[date] ?? { breakfastDishId: null, lunchDishId: null, snackDishId: null };
+        const key = `${mealType}DishId` as 'breakfastDishId' | 'lunchDishId' | 'snackDishId';
+        return { ...prev, [date]: { ...current, [key]: dishId } };
+      });
+      setHasUnsavedChanges(true);
+    },
+    [],
+  );
 
-  // ============== CALLBACK: lưu lịch tuần ==============
-  const handleSaveSchedule = useCallback(async () => {
+  // ============== CALLBACK: lưu thực đơn cả tuần ==============
+  const handleSaveMenu = useCallback(async () => {
     if (!campusId || !gradeLevel) {
       toast.error('Vui lòng chọn cơ sở và khối lớp trước khi lưu');
       return;
     }
-    setIsSavingSchedule(true);
+    setIsSaving(true);
     try {
-      const payload: BulkSchedulesPayload = {
-        campusId,
-        gradeLevel,
-        weekStart,
-        schedules: WORKING_DAY_ISOS.map((iso) => {
-          const date = addDays(weekStart, iso - 1);
-          return { date, dishIds: scheduleMap[date] ?? [] };
-        }),
-      };
-      const res = await scheduleService.bulkUpsert(payload);
-      if (res?.success) {
-        toast.success('Đã lưu lịch thực đơn tuần');
+      const daysPayload = weekDays
+        .filter((d) => menu[d]) // chỉ gửi các ngày user đã thao tác
+        .map((d) => ({
+          date: d,
+          breakfastDishId: menu[d]?.breakfastDishId ?? null,
+          lunchDishId: menu[d]?.lunchDishId ?? null,
+          snackDishId: menu[d]?.snackDishId ?? null,
+        }));
+
+      if (daysPayload.length === 0) {
+        toast.info('Chưa có thay đổi nào để lưu');
+        return;
+      }
+
+      const res = await scheduleService.setMenuForWeek({
+        campusId: Number(campusId),
+        gradeLevel: gradeLevel as GradeLevel,
+        days: daysPayload,
+      });
+      if (res?.success && res.data) {
+        toast.success(`Đã lưu thực đơn cho ${res.data.saved.length} ngày.`);
+        setHasUnsavedChanges(false);
       } else {
-        toast.error(res?.message ?? 'Lưu lịch thất bại');
+        toast.error(res?.message ?? 'Lưu thực đơn thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra khi lưu lịch');
+      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra khi lưu thực đơn');
     } finally {
-      setIsSavingSchedule(false);
+      setIsSaving(false);
     }
-  }, [campusId, gradeLevel, weekStart, scheduleMap]);
-
-  // ============== COMPUTED: 5 ngày làm việc của tuần hiện tại ==============
-  const workingDates = useMemo(
-    () => WORKING_DAY_ISOS.map((iso) => addDays(weekStart, iso - 1)),
-    [weekStart],
-  );
-
-  // ============== COMPUTED: tuần có thay đổi chưa lưu ==============
-  // (Đơn giản: hiển thị thông báo nhắc; không tracking chi tiết để tránh over-engineering)
-  const today = getVietnamToday();
+  }, [campusId, gradeLevel, weekDays, menu]);
 
   return (
     <div className="space-y-4">
-      {/* =============== PHẦN 1: DANH MỤC MÓN ĂN =============== */}
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-slate-800">
-                <ChefHat className="h-5 w-5 text-indigo-600" />
-                Danh mục món ăn
-              </CardTitle>
-              <CardDescription>
-                Tạo nhanh các món ăn cùng thành phần dưỡng chất để dùng chung cho mọi khối lớp.
-              </CardDescription>
-            </div>
-            <Button onClick={() => setCreateDishOpen(true)} disabled={!campusId}>
-              <Plus className="h-4 w-4" />
-              Thêm món
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {!campusId ? (
-            <EmptyState message="Vui lòng chọn cơ sở ở thanh trên." />
-          ) : isLoadingDishes ? (
-            <div className="space-y-2">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
-              ))}
-            </div>
-          ) : dishes.length === 0 ? (
-            <EmptyState message="Chưa có món nào trong danh mục. Bấm Thêm món để bắt đầu." />
-          ) : (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {dishes.map((d) => (
-                <div
-                  key={d.id}
-                  className="flex items-start gap-2 rounded-md border border-slate-200 bg-white p-3"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-slate-800">{d.name}</p>
-                    {d.nutrients && (
-                      <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{d.nutrients}</p>
-                    )}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeletingDishId(d.id)}
-                    title="Xóa món"
-                  >
-                    <Trash2 className="h-4 w-4 text-rose-500" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* =============== PHẦN 2: LỊCH THỰC ĐƠN THEO TUẦN =============== */}
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3">
             <div>
               <CardTitle className="flex items-center gap-2 text-slate-800">
                 <CalendarIcon className="h-5 w-5 text-emerald-600" />
-                Lịch thực đơn tuần
+                Sổ thực đơn tuần
               </CardTitle>
               <CardDescription>
-                Gán các món ăn trong danh mục vào từng ngày (T2–T6) theo từng khối. Bấm{' '}
-                <strong>Lưu lịch tuần</strong> để ghi nhận.
+                Calendar table 7 ngày (T2–CN) × 3 bữa (Sáng/Trưa/Xế). Mỗi ô là dropdown chọn món
+                từ danh mục. Bấm <strong>Lưu thực đơn</strong> để ghi nhận cả tuần.
               </CardDescription>
             </div>
 
-            {/* Controls: chọn khối + điều hướng tuần */}
+            {/* Controls */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <div className="w-full space-y-1.5 sm:w-56">
+              <div className="w-full space-y-1.5 sm:w-48">
                 <label className="text-sm font-medium">Khối lớp</label>
                 <Select
                   value={gradeLevel}
@@ -380,7 +322,7 @@ export function MenuTab({ campusId }: { campusId: string }) {
                 </Select>
               </div>
 
-              <div className="flex items-end gap-2">
+              <div className="flex flex-1 items-end gap-2">
                 <Button
                   variant="outline"
                   size="icon"
@@ -390,12 +332,9 @@ export function MenuTab({ campusId }: { campusId: string }) {
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Tuần bắt đầu (T2)</label>
+                  <label className="text-sm font-medium">Tuần</label>
                   <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700">
-                    {formatVNDate(weekStart)} — {formatVNDate(addDays(weekStart, 4))}
-                    <span className="ml-2 text-xs font-normal text-slate-500">
-                      (còn {diffDays(today, weekStart)} ngày nữa)
-                    </span>
+                    {formatVNDate(weekStart)} → {formatVNDate(addDays(weekStart, 6))}
                   </div>
                 </div>
                 <Button
@@ -415,24 +354,23 @@ export function MenuTab({ campusId }: { campusId: string }) {
                 </Button>
               </div>
 
-              <div className="ml-auto">
-                <Button
-                  onClick={handleSaveSchedule}
-                  disabled={isSavingSchedule || !campusId || !gradeLevel}
-                >
-                  {isSavingSchedule ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Đang lưu...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4" />
-                      Lưu lịch tuần
-                    </>
-                  )}
-                </Button>
-              </div>
+              <Button
+                onClick={handleSaveMenu}
+                disabled={isSaving || !campusId || !gradeLevel || isLoadingDishes}
+                className="shrink-0"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Đang lưu...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Lưu thực đơn{hasUnsavedChanges ? ' *' : ''}
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -440,105 +378,386 @@ export function MenuTab({ campusId }: { campusId: string }) {
         <CardContent>
           {!campusId || !gradeLevel ? (
             <EmptyState message="Vui lòng chọn cơ sở và khối lớp ở thanh trên." />
-          ) : isLoadingSchedule ? (
+          ) : isLoadingSchedule || isLoadingDishes ? (
             <div className="space-y-2">
-              {Array.from({ length: 5 }).map((_, i) => (
+              {Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton key={i} className="h-24 w-full" />
               ))}
             </div>
           ) : dishes.length === 0 ? (
-            <EmptyState message="Cơ sở chưa có món ăn nào trong danh mục. Hãy thêm món trước khi lên lịch." />
+            <EmptyState message="Cơ sở chưa có món ăn nào. Bấm tab Danh sách món ăn để thêm món trước khi lên lịch." />
           ) : (
-            <div className="space-y-3">
-              {workingDates.map((date) => {
-                const dow = getISODayOfWeek(date);
-                const wd = WEEKDAY_LABELS_VN.find((w) => w.iso === dow);
-                const selectedIds = new Set(scheduleMap[date] ?? []);
-                return (
-                  <div
-                    key={date}
-                    className="rounded-lg border border-slate-200 bg-white p-3"
-                  >
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="font-normal">
-                          {wd?.full}
-                        </Badge>
-                        <span className="text-sm font-medium text-slate-800">
-                          {formatVNDate(date)}
-                        </span>
-                        {date === today && (
-                          <Badge variant="default" className="font-normal">
-                            Hôm nay
-                          </Badge>
-                        )}
-                      </div>
-                      <span className="text-xs text-slate-500">
-                        Đã gán: {selectedIds.size} món
-                      </span>
-                    </div>
-
-                    {/* Danh sách checkbox món cho ngày này */}
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                      {dishes.map((d) => {
-                        const checked = selectedIds.has(d.id);
+            <div className="overflow-x-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-32 bg-slate-50">Bữa</TableHead>
+                    {weekDays.map((date) => {
+                      const dow = getISODayOfWeek(date);
+                      const wd = WEEKDAY_LABELS_VN.find((w) => w.iso === dow);
+                      const isToday = date === getVietnamToday();
+                      return (
+                        <TableHead
+                          key={date}
+                          className={`min-w-[180px] text-center ${isToday ? 'bg-amber-50' : 'bg-slate-50'}`}
+                        >
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-xs font-medium text-slate-500">{wd?.short}</span>
+                            <span className="text-sm font-semibold text-slate-800">
+                              {formatVNDate(date)}
+                            </span>
+                            {isToday && (
+                              <Badge variant="default" className="h-4 px-1 text-[10px]">
+                                Hôm nay
+                              </Badge>
+                            )}
+                          </div>
+                        </TableHead>
+                      );
+                    })}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {DISH_MEAL_TYPE_ORDER.map((mealType) => (
+                    <TableRow key={mealType}>
+                      <TableCell className="bg-slate-50/50 font-medium text-slate-700">
+                        <div className="flex items-center gap-1.5">
+                          <UtensilsCrossed className="h-3.5 w-3.5 text-slate-400" />
+                          {DISH_MEAL_TYPE_LABELS[mealType]}
+                        </div>
+                      </TableCell>
+                      {weekDays.map((date) => {
+                        const current = menu[date]?.[`${mealType}DishId` as 'breakfastDishId' | 'lunchDishId' | 'snackDishId'] ?? null;
+                        const options = dishesByMealType[mealType];
                         return (
-                          <label
-                            key={d.id}
-                            className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-sm transition-colors hover:bg-slate-50 has-[[data-state=checked]]:border-indigo-300 has-[[data-state=checked]]:bg-indigo-50"
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={() => toggleDishInDay(date, d.id)}
+                          <TableCell key={`${date}-${mealType}`} className="p-2 align-top">
+                            <DishPicker
+                              value={current}
+                              options={options}
+                              onChange={(id) => setMenuItem(date, mealType, id)}
+                              disabled={isSaving}
                             />
-                            <UtensilsCrossed className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                            <span className="truncate text-slate-700">{d.name}</span>
-                          </label>
+                          </TableCell>
                         );
                       })}
-                    </div>
-                  </div>
-                );
-              })}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/**
+ * Dropdown chọn 1 món cho 1 ô của calendar table. Khi user chọn "(trống)" → id = null.
+ */
+function DishPicker({
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  value: number | null;
+  options: Dish[];
+  onChange: (id: number | null) => void;
+  disabled: boolean;
+}) {
+  return (
+    <Select
+      value={value === null ? '__none__' : String(value)}
+      onValueChange={(v) => onChange(v === '__none__' ? null : Number(v))}
+      disabled={disabled}
+    >
+      <SelectTrigger className="h-9 w-full text-xs">
+        <SelectValue placeholder="(trống)" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__" className="text-slate-400 italic">
+          — (trống) —
+        </SelectItem>
+        {options.map((d) => (
+          <SelectItem key={d.id} value={String(d.id)}>
+            {d.name}
+            {d.calories != null && (
+              <span className="ml-1 text-[10px] text-slate-400">· {Math.round(d.calories)} kcal</span>
+            )}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+// =====================================================================================
+// SUB-TAB 2: Danh sách món ăn
+// =====================================================================================
+
+/**
+ * Schema form — tất cả trường là string ở tầng form (để dễ bind với `<Input>`),
+ * convert sang number | null khi submit. Validate ngay tại schema (không qua transform
+ * để tránh phải khai báo lại type cho defaultValues).
+ */
+const nutrientString = z
+  .string()
+  .refine(
+    (v) => v === '' || (!Number.isNaN(Number(v)) && Number(v) >= 0),
+    { message: 'Phải là số ≥ 0 hoặc để trống' },
+  );
+
+const editDishSchema = z.object({
+  name: z.string().trim().min(1, 'Tên món là bắt buộc').max(100),
+  mealType: z.enum(['BREAKFAST', 'LUNCH', 'SNACK']),
+  ingredients: z.string().max(2000).optional().or(z.literal('')),
+  calories: nutrientString,
+  protein: nutrientString,
+  carbs: nutrientString,
+  fat: nutrientString,
+});
+type EditDishFormValues = z.infer<typeof editDishSchema>;
+
+/** Convert string form value → number | null cho payload. */
+const toNutrient = (v: string | undefined): number | null => {
+  if (v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+
+function DishesAdmin({ campusId }: { campusId: string }) {
+  const [dishes, setDishes] = useState<Dish[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [editing, setEditing] = useState<Dish | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const fetchDishes = useCallback(async () => {
+    if (!campusId) {
+      setDishes([]);
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const res = await dishService.list({ campusId, limit: 500 });
+      if (res?.success && Array.isArray(res.data)) {
+        setDishes(res.data);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách món');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [campusId]);
+
+  useEffect(() => {
+    void fetchDishes();
+  }, [fetchDishes]);
+
+  // Mở dialog tạo mới khi campus đổi (clear editing)
+  useEffect(() => {
+    setEditing(null);
+  }, [campusId]);
+
+  const handleDelete = useCallback(async () => {
+    if (deletingId === null) return;
+    setIsDeleting(true);
+    try {
+      const res = await dishService.remove(deletingId);
+      if (res?.success) {
+        toast.success('Đã xoá món ăn (archived)');
+        setDishes((prev) => prev.filter((d) => d.id !== deletingId));
+      } else {
+        toast.error(res?.message ?? 'Xoá thất bại');
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Xoá thất bại');
+    } finally {
+      setIsDeleting(false);
+      setDeletingId(null);
+    }
+  }, [deletingId]);
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-slate-800">
+                <ChefHat className="h-5 w-5 text-indigo-600" />
+                Danh sách món ăn
+              </CardTitle>
+              <CardDescription>
+                Tạo món ăn cùng thành phần dưỡng chất (tất cả trường dinh dưỡng đều tuỳ chọn).
+                Dùng chung cho mọi khối lớp trong cơ sở.
+              </CardDescription>
+            </div>
+            <Button onClick={() => setIsCreating(true)} disabled={!campusId}>
+              <Plus className="h-4 w-4" />
+              Thêm món
+            </Button>
+          </div>
+        </CardHeader>
+
+        <CardContent>
+          {!campusId ? (
+            <EmptyState message="Vui lòng chọn cơ sở ở thanh trên." />
+          ) : isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          ) : dishes.length === 0 ? (
+            <EmptyState message="Chưa có món nào. Bấm Thêm món để bắt đầu." />
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-12 text-center">#</TableHead>
+                    <TableHead>Tên món</TableHead>
+                    <TableHead className="w-32">Bữa</TableHead>
+                    <TableHead className="w-24 text-right">kcal</TableHead>
+                    <TableHead className="w-20 text-right">Đạm (g)</TableHead>
+                    <TableHead className="w-20 text-right">Bột (g)</TableHead>
+                    <TableHead className="w-20 text-right">Béo (g)</TableHead>
+                    <TableHead className="w-24 text-center">Trạng thái</TableHead>
+                    <TableHead className="w-24 text-right">Thao tác</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dishes.map((d, idx) => (
+                    <TableRow key={d.id}>
+                      <TableCell className="text-center text-sm text-muted-foreground">
+                        {idx + 1}
+                      </TableCell>
+                      <TableCell>
+                        <p className="text-sm font-semibold text-slate-800">{d.name}</p>
+                        {d.ingredients && (
+                          <p className="line-clamp-1 text-xs text-slate-500">
+                            {d.ingredients}
+                          </p>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            d.mealType === 'BREAKFAST'
+                              ? 'border-amber-300 bg-amber-50 text-amber-700'
+                              : d.mealType === 'LUNCH'
+                                ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                                : 'border-violet-300 bg-violet-50 text-violet-700'
+                          }
+                        >
+                          {DISH_MEAL_TYPE_LABELS[d.mealType]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {d.calories != null ? Math.round(d.calories) : '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {d.protein != null ? d.protein : '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {d.carbs != null ? d.carbs : '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {d.fat != null ? d.fat : '—'}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {d.isActive ? (
+                          <Badge variant="outline" className="border-emerald-300 text-emerald-700">
+                            Hoạt động
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary">Đã ẩn</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setEditing(d)}
+                            title="Sửa món"
+                          >
+                            <Pencil className="h-4 w-4 text-slate-500" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setDeletingId(d.id)}
+                            title="Xoá món"
+                          >
+                            <Trash2 className="h-4 w-4 text-rose-500" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* =============== DIALOG THÊM MÓN =============== */}
-      <CreateDishDialog
-        open={createDishOpen}
-        onOpenChange={setCreateDishOpen}
+      {/* Dialog tạo mới */}
+      <DishFormDialog
+        open={isCreating}
+        onOpenChange={setIsCreating}
         campusId={campusId}
-        onCreated={handleDishCreated}
+        dish={null}
+        onSaved={(d) => {
+          setDishes((prev) => [...prev, d]);
+          setIsCreating(false);
+        }}
       />
 
-      {/* =============== ALERT DIALOG XÓA MÓN =============== */}
-      <AlertDialog
-        open={!!deletingDishId}
-        onOpenChange={(o) => !o && setDeletingDishId(null)}
-      >
+      {/* Dialog sửa */}
+      {editing && (
+        <DishFormDialog
+          open={!!editing}
+          onOpenChange={(o) => {
+            if (!o) setEditing(null);
+          }}
+          campusId={campusId}
+          dish={editing}
+          onSaved={(d) => {
+            setDishes((prev) => prev.map((x) => (x.id === d.id ? d : x)));
+            setEditing(null);
+          }}
+        />
+      )}
+
+      {/* Alert xoá */}
+      <AlertDialog open={deletingId !== null} onOpenChange={(o) => !o && setDeletingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Xóa món ăn này?</AlertDialogTitle>
+            <AlertDialogTitle>Xoá món ăn này?</AlertDialogTitle>
             <AlertDialogDescription>
-              Món sẽ bị xóa khỏi danh mục và tự động gỡ khỏi mọi ngày trong lịch tuần hiện tại.
+              Món sẽ bị ẩn khỏi danh mục và tự động gỡ khỏi mọi ngày trong thực đơn tuần (SetNull FK).
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeletingDish}>Hủy</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting}>Huỷ</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteDish}
-              disabled={isDeletingDish}
+              onClick={handleDelete}
+              disabled={isDeleting}
               className="bg-rose-600 hover:bg-rose-700"
             >
-              {isDeletingDish ? (
+              {isDeleting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Đang xóa...
+                  Đang xoá...
                 </>
               ) : (
-                'Xóa món'
+                'Xoá món'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -548,61 +767,94 @@ export function MenuTab({ campusId }: { campusId: string }) {
   );
 }
 
-// =====================================================================================
-// SUB-COMPONENT: EmptyState
-// =====================================================================================
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-sm text-slate-500">
-      {message}
-    </div>
-  );
-}
-
-// =====================================================================================
-// SUB-COMPONENT: CreateDishDialog
-// =====================================================================================
-function CreateDishDialog({
+/**
+ * Dialog tạo mới / sửa món ăn. Tất cả field dinh dưỡng + ingredients là OPTIONAL.
+ */
+function DishFormDialog({
   open,
   onOpenChange,
   campusId,
-  onCreated,
+  dish,
+  onSaved,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   campusId: string;
-  onCreated: (d: Dish) => void;
+  dish: Dish | null;
+  onSaved: (d: Dish) => void;
 }) {
+  const isEdit = !!dish;
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const form = useForm<CreateDishFormValues>({
-    resolver: zodResolver(createDishSchema),
-    defaultValues: { name: '', nutrients: '' },
+  const form = useForm<EditDishFormValues>({
+    resolver: zodResolver(editDishSchema),
+    defaultValues: {
+      name: dish?.name ?? '',
+      mealType: (dish?.mealType as DishMealType) ?? 'BREAKFAST',
+      ingredients: dish?.ingredients ?? '',
+      calories: dish?.calories != null ? String(dish.calories) : '',
+      protein: dish?.protein != null ? String(dish.protein) : '',
+      carbs: dish?.carbs != null ? String(dish.carbs) : '',
+      fat: dish?.fat != null ? String(dish.fat) : '',
+    },
   });
 
   useEffect(() => {
-    if (!open) form.reset({ name: '', nutrients: '' });
-  }, [open, form]);
+    if (open) {
+      form.reset({
+        name: dish?.name ?? '',
+        mealType: (dish?.mealType as DishMealType) ?? 'BREAKFAST',
+        ingredients: dish?.ingredients ?? '',
+        calories: dish?.calories != null ? String(dish.calories) : '',
+        protein: dish?.protein != null ? String(dish.protein) : '',
+        carbs: dish?.carbs != null ? String(dish.carbs) : '',
+        fat: dish?.fat != null ? String(dish.fat) : '',
+      });
+    }
+  }, [open, dish, form]);
 
-  const onSubmit = async (values: CreateDishFormValues) => {
+  const onSubmit = async (values: EditDishFormValues) => {
     if (!campusId) {
-      toast.error('Vui lòng chọn cơ sở trước khi tạo món');
+      toast.error('Vui lòng chọn cơ sở trước');
       return;
     }
     setIsSubmitting(true);
     try {
-      const payload: CreateDishPayload = {
-        name: values.name.trim(),
-        nutrients: values.nutrients?.trim() || undefined,
-        campusId,
-      };
-      const res = await dishService.create(payload);
-      if (res?.success && res.data) {
-        toast.success(`Đã thêm món "${res.data.name}"`);
-        onCreated(res.data);
-        onOpenChange(false);
+      if (isEdit && dish) {
+        const payload: UpdateDishPayload = {
+          name: values.name.trim(),
+          mealType: values.mealType,
+          ingredients: values.ingredients?.trim() ? values.ingredients.trim() : null,
+          calories: toNutrient(values.calories),
+          protein: toNutrient(values.protein),
+          carbs: toNutrient(values.carbs),
+          fat: toNutrient(values.fat),
+        };
+        const res = await dishService.update(dish.id, payload);
+        if (res?.success && res.data) {
+          toast.success('Đã cập nhật món');
+          onSaved(res.data);
+        } else {
+          toast.error(res?.message ?? 'Cập nhật thất bại');
+        }
       } else {
-        toast.error(res?.message ?? 'Thêm món thất bại');
+        const payload: CreateDishPayload = {
+          campusId: Number(campusId),
+          name: values.name.trim(),
+          mealType: values.mealType,
+          ingredients: values.ingredients?.trim() ? values.ingredients.trim() : null,
+          calories: toNutrient(values.calories),
+          protein: toNutrient(values.protein),
+          carbs: toNutrient(values.carbs),
+          fat: toNutrient(values.fat),
+        };
+        const res = await dishService.create(payload);
+        if (res?.success && res.data) {
+          toast.success(`Đã thêm món "${res.data.name}"`);
+          onSaved(res.data);
+        } else {
+          toast.error(res?.message ?? 'Thêm món thất bại');
+        }
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra');
@@ -613,14 +865,24 @@ function CreateDishDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5 text-indigo-600" />
-            Thêm món ăn mới
+            {isEdit ? (
+              <>
+                <Pencil className="h-5 w-5 text-indigo-600" />
+                Sửa món ăn
+              </>
+            ) : (
+              <>
+                <Plus className="h-5 w-5 text-indigo-600" />
+                Thêm món ăn mới
+              </>
+            )}
           </DialogTitle>
           <DialogDescription>
-            Tạo nhanh món ăn để dùng chung trong danh mục. Có thể bổ sung thành phần dưỡng chất.
+            Tất cả trường dinh dưỡng và thành phần đều <strong>tuỳ chọn</strong>. Chỉ tên món + loại
+            bữa là bắt buộc.
           </DialogDescription>
         </DialogHeader>
 
@@ -631,10 +893,10 @@ function CreateDishDialog({
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Tên món</FormLabel>
+                  <FormLabel>Tên món *</FormLabel>
                   <FormControl>
                     <Input
-                      placeholder="Vd: Cháo gà hạt sen"
+                      placeholder="Vd: Cháo thịt bằm cà rốt"
                       autoComplete="off"
                       disabled={isSubmitting}
                       {...field}
@@ -644,24 +906,149 @@ function CreateDishDialog({
                 </FormItem>
               )}
             />
+
             <FormField
               control={form.control}
-              name="nutrients"
+              name="mealType"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Loại bữa *</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    disabled={isSubmitting}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {DISH_MEAL_TYPE_ORDER.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {DISH_MEAL_TYPE_LABELS[m]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="ingredients"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Thành phần dưỡng chất (tuỳ chọn)</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Vd: Đạm 12g, Béo 8g, Tinh bột 30g, Chất xơ 4g..."
+                      placeholder="Vd: Gạo 30g, thịt heo xay 20g, cà rốt 15g, hành lá 5g..."
                       rows={3}
                       disabled={isSubmitting}
                       {...field}
                     />
                   </FormControl>
+                  <FormDescription>
+                    Có thể ghi nguyên liệu + thành phần dinh dưỡng định lượng.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <FormField
+                control={form.control}
+                name="calories"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Calories</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="kcal"
+                        min="0"
+                        step="0.1"
+                        disabled={isSubmitting}
+                        {...field}
+                        value={field.value ?? ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="protein"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Đạm (g)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="0"
+                        min="0"
+                        step="0.1"
+                        disabled={isSubmitting}
+                        {...field}
+                        value={field.value ?? ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="carbs"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Tinh bột (g)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="0"
+                        min="0"
+                        step="0.1"
+                        disabled={isSubmitting}
+                        {...field}
+                        value={field.value ?? ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="fat"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Béo (g)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="0"
+                        min="0"
+                        step="0.1"
+                        disabled={isSubmitting}
+                        {...field}
+                        value={field.value ?? ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             <DialogFooter className="gap-2 pt-2 sm:gap-2">
               <Button
                 type="button"
@@ -669,13 +1056,18 @@ function CreateDishDialog({
                 onClick={() => onOpenChange(false)}
                 disabled={isSubmitting}
               >
-                Hủy
+                Huỷ
               </Button>
               <Button type="submit" disabled={isSubmitting || !campusId}>
                 {isSubmitting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Đang lưu...
+                  </>
+                ) : isEdit ? (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Lưu thay đổi
                   </>
                 ) : (
                   <>
@@ -692,5 +1084,48 @@ function CreateDishDialog({
   );
 }
 
-// Export GradeLevel labels cho debug
-export { GRADE_LEVEL_LABELS };
+// =====================================================================================
+// MAIN COMPONENT
+// =====================================================================================
+
+export function MenuTab({ campusId }: { campusId: string }) {
+  const [activeTab, setActiveTab] = useState<'menu' | 'dishes'>('menu');
+
+  return (
+    <div className="space-y-4">
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => setActiveTab(v as 'menu' | 'dishes')}
+      >
+        <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsTrigger value="menu" className="gap-1.5">
+            <CalendarIcon className="h-4 w-4" />
+            Thực đơn tuần
+          </TabsTrigger>
+          <TabsTrigger value="dishes" className="gap-1.5">
+            <ChefHat className="h-4 w-4" />
+            Danh sách món ăn
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="menu" className="mt-4">
+          <WeekMenuEditor campusId={campusId} />
+        </TabsContent>
+        <TabsContent value="dishes" className="mt-4">
+          <DishesAdmin campusId={campusId} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// =====================================================================================
+// SUB-COMPONENT: EmptyState
+// =====================================================================================
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-sm text-slate-500">
+      {message}
+    </div>
+  );
+}

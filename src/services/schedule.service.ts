@@ -25,6 +25,14 @@ export interface DailySchedule {
   updatedAt?: string;
 }
 
+/** Một dòng tóm tắt Dish được nhúng vào response (id + name + mealType + calories). */
+export interface DishSummary {
+  id: number;
+  name: string;
+  mealType: 'BREAKFAST' | 'LUNCH' | 'SNACK';
+  calories: number | null;
+}
+
 /** Response khi GET /schedules/weekly-by-grade. */
 export interface WeeklyScheduleByGradeResponse {
   campus: { id: number; name: string };
@@ -37,6 +45,13 @@ export interface WeeklyScheduleByGradeResponse {
     breakfast: string | null;
     lunch: string | null;
     snack: string | null;
+    /** FK đến Dish catalog — ưu tiên hiển thị `breakfastDish.name` khi có. */
+    breakfastDishId: number | null;
+    lunchDishId: number | null;
+    snackDishId: number | null;
+    breakfastDish: DishSummary | null;
+    lunchDish: DishSummary | null;
+    snackDish: DishSummary | null;
     activities: string | null;
   }>;
 }
@@ -105,4 +120,40 @@ export const scheduleService = {
   async bulkUpsert(payload: BulkSchedulesPayload): Promise<ApiResponse<{ totalSaved: number; schedules: DailySchedule[] }>> {
     return apiClient.post('/schedules/bulk', payload);
   },
+
+  /**
+   * Set thực đơn cả tuần qua Dish catalog — dùng cho calendar table ở FE.
+   * POST /api/v1/schedules/menu-week
+   * Body: { campusId, gradeLevel, days: [{ date, breakfastDishId?, lunchDishId?, snackDishId? }] }
+   */
+  async setMenuForWeek(
+    payload: SetMenuForWeekPayload,
+  ): Promise<ApiResponse<SetMenuForWeekResponse>> {
+    return apiClient.post('/schedules/menu-week', payload);
+  },
 };
+
+export interface SetMenuForWeekPayload {
+  campusId: number;
+  gradeLevel: GradeLevel;
+  days: Array<{
+    date: string;
+    breakfastDishId?: number | null;
+    lunchDishId?: number | null;
+    snackDishId?: number | null;
+  }>;
+}
+
+export interface SetMenuForWeekResponse {
+  campusId: number;
+  gradeLevel: GradeLevel;
+  saved: Array<{
+    date: string;
+    breakfastDishId: number | null;
+    breakfastDish: DishSummary | null;
+    lunchDishId: number | null;
+    lunchDish: DishSummary | null;
+    snackDishId: number | null;
+    snackDish: DishSummary | null;
+  }>;
+}
