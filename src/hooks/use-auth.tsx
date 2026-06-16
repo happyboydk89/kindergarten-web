@@ -21,7 +21,10 @@ interface AuthContextValue {
   role: UserRole | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (phoneNumber: string, password: string) => Promise<AuthUser>;
+  /**
+   * Đăng nhập. `rememberMe=true` → BE set cookie refresh 30 ngày thay vì 7d.
+   */
+  login: (phoneNumber: string, password: string, rememberMe?: boolean) => Promise<AuthUser>;
   logout: () => Promise<void>;
 }
 
@@ -74,8 +77,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const login = useCallback(
-    async (phoneNumber: string, password: string): Promise<AuthUser> => {
-      const res = await authService.login(phoneNumber, password);
+    async (phoneNumber: string, password: string, rememberMe = false): Promise<AuthUser> => {
+      const res = await authService.login(phoneNumber, password, rememberMe);
       if (!res.success) {
         throw new Error(res.message ?? 'Đăng nhập thất bại');
       }

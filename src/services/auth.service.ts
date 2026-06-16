@@ -15,6 +15,7 @@ export interface AuthUser {
 interface LoginPayload {
   phoneNumber: string;
   password: string;
+  rememberMe?: boolean;
 }
 
 interface LoginResponseData {
@@ -28,8 +29,20 @@ interface ChangePasswordPayload {
 }
 
 export const authService = {
-  async login(phoneNumber: string, password: string): Promise<ApiResponse<LoginResponseData>> {
-    return apiClient.post('/auth/login', { phoneNumber, password } as LoginPayload);
+  /**
+   * Đăng nhập. Nếu `rememberMe=true` → BE set cookie refresh 30 ngày (mặc định 7d).
+   * Access token luôn short-lived (15m) — FE tự gọi `/auth/refresh` khi cần.
+   */
+  async login(
+    phoneNumber: string,
+    password: string,
+    rememberMe = false,
+  ): Promise<ApiResponse<LoginResponseData>> {
+    return apiClient.post('/auth/login', {
+      phoneNumber,
+      password,
+      rememberMe,
+    } as LoginPayload);
   },
 
   async logout(): Promise<ApiResponse<null>> {

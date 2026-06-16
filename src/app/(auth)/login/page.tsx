@@ -16,6 +16,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Form,
   FormControl,
@@ -33,6 +34,7 @@ const loginSchema = z.object({
     .min(1, 'Vui lòng nhập số điện thoại')
     .regex(/^0\d{9,10}$/, 'Số điện thoại không hợp lệ'),
   password: z.string().min(6, 'Mật khẩu tối thiểu 6 ký tự'),
+  rememberMe: z.boolean().default(false),
 });
 
 type LoginFormValues = z.infer<typeof loginSchema>;
@@ -44,14 +46,18 @@ export default function LoginPage() {
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { phoneNumber: '', password: '' },
+    defaultValues: { phoneNumber: '', password: '', rememberMe: false },
   });
 
   async function onSubmit(values: LoginFormValues) {
     setIsSubmitting(true);
     try {
-      const user = await login(values.phoneNumber, values.password);
-      toast.success('Đăng nhập thành công');
+      const user = await login(values.phoneNumber, values.password, values.rememberMe);
+      toast.success(
+        values.rememberMe
+          ? 'Đăng nhập thành công — ghi nhớ 30 ngày'
+          : 'Đăng nhập thành công',
+      );
       router.push(getRoleHomePath(user.role));
     } catch (error) {
       const message =
@@ -149,6 +155,32 @@ export default function LoginPage() {
                         />
                       </FormControl>
                       <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="rememberMe"
+                  render={({ field }) => (
+                    <FormItem>
+                      <label
+                        htmlFor="rememberMe"
+                        className="flex cursor-pointer select-none items-center gap-2 text-sm text-slate-600"
+                      >
+                        <Checkbox
+                          id="rememberMe"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          disabled={isSubmitting}
+                        />
+                        <span>
+                          Ghi nhớ đăng nhập{' '}
+                          <span className="text-xs text-slate-400">
+                            (giữ phiên 30 ngày)
+                          </span>
+                        </span>
+                      </label>
                     </FormItem>
                   )}
                 />
