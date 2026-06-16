@@ -184,14 +184,21 @@ export function AssignTeachersDialog({
                         aria-label={`Chọn giáo viên ${t.fullName}`}
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-800">
-                          {t.fullName}
+                        {/*
+                          Dùng <div> + <span> thay vì <p> vì <Badge> render thành <div>,
+                          mà HTML spec không cho phép <div> lồng trong <p> → React hydration error.
+                          Bug chỉ trigger khi `isMain === true` (sau khi click "Chỉ định chủ nhiệm").
+                        */}
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium text-slate-800">
+                            {t.fullName}
+                          </span>
                           {isMain && (
-                            <Badge className="ml-2" variant="default">
+                            <Badge variant="default" className="shrink-0">
                               Chủ nhiệm
                             </Badge>
                           )}
-                        </p>
+                        </div>
                         <p className="truncate text-xs text-muted-foreground">
                           {t.phoneNumber}
                           {t.email ? ` · ${t.email}` : ''}
