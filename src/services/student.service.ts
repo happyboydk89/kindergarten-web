@@ -12,6 +12,7 @@ export interface StudentBrief {
   fullName: string;
   dateOfBirth?: string;
   gender?: string;
+  nickname?: string;
   classId?: string | null;
   className?: string | null;
   campusId?: string | null;

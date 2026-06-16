@@ -2,38 +2,37 @@
 
 /**
  * =====================================================================================
- * TAB 3 — QUẢN LÝ GIÁO VIÊN & PHÂN CÔNG
+ * TAB 3 — QUẢN LÝ GIÁO VIÊN & PHÂN CÔNG (refactor)
  * =====================================================================================
  *
- * Phạm vi:
- *   1. Bảng danh sách giáo viên (lọc theo campusId).
- *      - Gọi GET /api/v1/teachers
- *   2. Panel "Phân công đứng lớp":
- *      - Bước 1: Chọn 1 lớp (Select) → load danh sách lớp của campusId.
- *      - Bước 2: Hiển thị Checkbox list giáo viên (cùng campus).
- *      - Ràng buộc: chỉ cho phép tích từ 1 đến 3 checkbox (validate Zod).
- *      - Bước 3: Bấm "Lưu phân công" → PUT /api/v1/classes/:id/teachers.
- *
- * Ràng buộc:
- *   - Luôn check `res?.success && res.data` trước khi dùng.
- *   - Submit button có loading + disabled.
+ * Layout mới (dễ quản lý hơn so với bản cũ):
+ *   1. Header: tiêu đề + nút "Tạo mới giáo viên" (PRINCIPAL only).
+ *   2. Bảng danh sách giáo viên với cột "Lớp đang dạy" — hiển thị tên lớp + badge chủ nhiệm.
+ *   3. Section "Phân công giáo viên đứng lớp" mới:
+ *      - Bảng MỘT DÒNG MỖI LỚP, columns: Tên lớp | DS giáo viên hiện tại | Hành động.
+ *      - Click "Sửa phân công" → mở `AssignTeachersDialog` (đã có) để thay đổi nhanh.
+ *   4. Mount `CreateTeacherDialog` ở cuối.
  * =====================================================================================
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { z } from 'zod';
 import { toast } from 'sonner';
+import { useRouter } from 'next/navigation';
 import {
-  CheckCircle2,
+  BadgeCheck,
+  Building2,
+  GraduationCap,
   Loader2,
-  Save,
-  UserCheck,
+  Pencil,
+  Plus,
   UserCog,
+  Users,
 } from 'lucide-react';
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -43,193 +42,158 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 
 import { teacherService, type TeacherBrief } from '@/services/teacher.service';
-import { classService, type ClassInfo } from '@/services/class.service';
+import { classService, type ClassInfo, type ClassTeacher } from '@/services/class.service';
 import type { GradeLevel } from '@/types';
 import { GRADE_LEVEL_LABELS } from '@/types';
 
-const assignmentSchema = z.object({
-  classId: z.string().min(1, 'Vui lòng chọn lớp'),
-  teacherIds: z
-    .array(z.string())
-    .min(1, 'Phải chọn ít nhất 1 giáo viên')
-    .max(3, 'Mỗi lớp chỉ được tối đa 3 giáo viên phụ trách'),
-});
+import { AssignTeachersDialog } from './assign-teachers-dialog';
+import { CreateTeacherDialog } from './create-teacher-dialog';
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 export function TeachersTab({ campusId }: { campusId: string }) {
-  // ============== STATE: danh sách giáo viên ==============
-  const [teachers, setTeachers] = useState<TeacherBrief[]>([]);
-  const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
+  const router = useRouter();
 
-  // ============== STATE: phân công ==============
+  // ============== STATE ==============
+  const [teachers, setTeachers] = useState<TeacherBrief[]>([]);
   const [classes, setClasses] = useState<ClassInfo[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [selectedTeacherIds, setSelectedTeacherIds] = useState<Set<string>>(new Set());
-  const [initialTeacherIds, setInitialTeacherIds] = useState<Set<string>>(new Set());
-  const [isSavingAssignment, setIsSavingAssignment] = useState(false);
-  const [loadingClasses, setLoadingClasses] = useState(false);
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
+  const [isLoadingClasses, setIsLoadingClasses] = useState(false);
+
+  // Dialogs
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingClass, setEditingClass] = useState<ClassInfo | null>(null);
+  const [currentClassTeachers, setCurrentClassTeachers] = useState<ClassTeacher[]>([]);
+  const [isLoadingClassTeachers, setIsLoadingClassTeachers] = useState(false);
 
   // ============== EFFECT: load teachers theo campus ==============
-  useEffect(() => {
+  const loadTeachers = useCallback(async () => {
     if (!campusId) {
       setTeachers([]);
       return;
     }
-    let cancelled = false;
-    async function load() {
-      setIsLoadingTeachers(true);
-      try {
-        const res = await teacherService.list({ campusId, limit: 100 });
-        if (!cancelled && res?.success && res.data) {
-          const payload = res.data as unknown;
-          if (Array.isArray(payload)) {
-            setTeachers(payload as TeacherBrief[]);
-          } else {
-            const p = payload as { data: TeacherBrief[] };
-            setTeachers(p.data ?? []);
-          }
-        }
-      } catch (err) {
-        if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách giáo viên');
-        }
-      } finally {
-        if (!cancelled) setIsLoadingTeachers(false);
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [campusId]);
-
-  // ============== EFFECT: load classes khi campusId thay đổi ==============
-  useEffect(() => {
-    if (!campusId) {
-      setClasses([]);
-      setSelectedClassId('');
-      setSelectedTeacherIds(new Set());
-      return;
-    }
-    let cancelled = false;
-    async function load() {
-      setLoadingClasses(true);
-      try {
-        const res = await classService.list({ campusId, limit: 100 });
-        if (!cancelled && res?.success && Array.isArray(res.data)) {
-          setClasses(res.data);
-        }
-      } catch {
-        /* silent */
-      } finally {
-        if (!cancelled) setLoadingClasses(false);
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [campusId]);
-
-  // ============== EFFECT: khi chọn lớp → load giáo viên hiện tại của lớp ==============
-  useEffect(() => {
-    if (!selectedClassId) {
-      setSelectedTeacherIds(new Set());
-      setInitialTeacherIds(new Set());
-      return;
-    }
-    const target = classes.find((c) => c.id === selectedClassId);
-    const current = new Set(target?.teacherIds ?? []);
-    setSelectedTeacherIds(new Set(current));
-    setInitialTeacherIds(current);
-  }, [selectedClassId, classes]);
-
-  // ============== COMPUTED: lớp đang chọn + số lượng giáo viên hiện tại ==============
-  const currentClass = useMemo(
-    () => classes.find((c) => c.id === selectedClassId),
-    [classes, selectedClassId],
-  );
-
-  const isDirty = useMemo(() => {
-    if (selectedTeacherIds.size !== initialTeacherIds.size) return true;
-    for (const id of selectedTeacherIds) {
-      if (!initialTeacherIds.has(id)) return true;
-    }
-    return false;
-  }, [selectedTeacherIds, initialTeacherIds]);
-
-  // ============== CALLBACK: toggle checkbox ==============
-  const toggleTeacher = useCallback((teacherId: string) => {
-    setSelectedTeacherIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(teacherId)) {
-        next.delete(teacherId);
-      } else {
-        // Không cho phép vượt quá 3
-        if (next.size >= 3) {
-          toast.warning('Mỗi lớp chỉ được phân công tối đa 3 giáo viên');
-          return prev;
-        }
-        next.add(teacherId);
-      }
-      return next;
-    });
-  }, []);
-
-  // ============== CALLBACK: lưu phân công ==============
-  const handleSaveAssignment = useCallback(async () => {
-    const validation = assignmentSchema.safeParse({
-      classId: selectedClassId,
-      teacherIds: Array.from(selectedTeacherIds),
-    });
-    if (!validation.success) {
-      toast.error(validation.error.issues[0]?.message ?? 'Vui lòng kiểm tra lại dữ liệu');
-      return;
-    }
-    if (!isDirty) {
-      toast.info('Không có thay đổi để lưu');
-      return;
-    }
-
-    setIsSavingAssignment(true);
+    setIsLoadingTeachers(true);
     try {
-      const res = await classService.assignTeachers(selectedClassId, {
-        teacherIds: Array.from(selectedTeacherIds),
-      });
+      const res = await teacherService.list({ campusId, limit: 200 });
       if (res?.success && res.data) {
-        toast.success('Đã lưu phân công giáo viên');
-        // Cập nhật lại class trong state
-        setClasses((prev) =>
-          prev.map((c) => (c.id === res.data!.id ? res.data! : c)),
-        );
-        setInitialTeacherIds(new Set(res.data.teacherIds ?? []));
-        setSelectedTeacherIds(new Set(res.data.teacherIds ?? []));
-      } else {
-        toast.error(res?.message ?? 'Lưu phân công thất bại');
+        const payload = res.data as unknown;
+        if (Array.isArray(payload)) {
+          setTeachers(payload as TeacherBrief[]);
+        } else {
+          const p = payload as { data: TeacherBrief[] };
+          setTeachers(p.data ?? []);
+        }
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra');
+      toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách giáo viên');
     } finally {
-      setIsSavingAssignment(false);
+      setIsLoadingTeachers(false);
     }
-  }, [selectedClassId, selectedTeacherIds, isDirty]);
+  }, [campusId]);
+
+  useEffect(() => {
+    void loadTeachers();
+  }, [loadTeachers]);
+
+  // ============== EFFECT: load classes theo campus ==============
+  const loadClasses = useCallback(async () => {
+    if (!campusId) {
+      setClasses([]);
+      return;
+    }
+    setIsLoadingClasses(true);
+    try {
+      const res = await classService.list({ campusId, limit: 100 });
+      if (res?.success && Array.isArray(res.data)) {
+        setClasses(res.data);
+      }
+    } catch {
+      /* silent */
+    } finally {
+      setIsLoadingClasses(false);
+    }
+  }, [campusId]);
+
+  useEffect(() => {
+    void loadClasses();
+  }, [loadClasses]);
+
+  // ============== CALLBACK: mở dialog sửa phân công cho 1 lớp ==============
+  const handleOpenEditAssignment = useCallback(async (klass: ClassInfo) => {
+    setEditingClass(klass);
+    setIsLoadingClassTeachers(true);
+    try {
+      const res = await classService.getTeachers(klass.id);
+      if (res.success && res.data) {
+        setCurrentClassTeachers(res.data.teachers);
+      } else {
+        setCurrentClassTeachers([]);
+      }
+    } catch {
+      setCurrentClassTeachers([]);
+    } finally {
+      setIsLoadingClassTeachers(false);
+    }
+  }, []);
+
+  const handleCloseAssignment = useCallback(() => {
+    setEditingClass(null);
+    setCurrentClassTeachers([]);
+  }, []);
+
+  const handleAssignmentSaved = useCallback(() => {
+    // Reload classes (để lấy teacherNames mới) + teachers (để lấy taughtClasses mới)
+    void loadClasses();
+    void loadTeachers();
+    router.refresh();
+  }, [loadClasses, loadTeachers, router]);
+
+  const handleTeacherCreated = useCallback(() => {
+    void loadTeachers();
+    router.refresh();
+  }, [loadTeachers, router]);
+
+  // ============== COMPUTED: map teacherId → teacher để tra cứu nhanh ==============
+  const teacherById = useMemo(() => {
+    const map = new Map<string, TeacherBrief>();
+    for (const t of teachers) {
+      map.set(String(t.id), t);
+    }
+    return map;
+  }, [teachers]);
 
   return (
-    <div className="space-y-4">
-      {/* =============== PHẦN 1: BẢNG GIÁO VIÊN =============== */}
+    <div className="space-y-6">
+      {/* =============== HEADER =============== */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800">
+            Quản lý Giáo viên
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Quản lý tài khoản giáo viên + phân công đứng lớp theo từng cơ sở.
+          </p>
+        </div>
+        {campusId && (
+          <Button onClick={() => setIsCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Tạo mới giáo viên
+          </Button>
+        )}
+      </div>
+
+      {/* =============== PHẦN 1: BẢNG GIÁO VIÊN + CỘT LỚP ĐANG DẠY =============== */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-slate-800">
-            <UserCog className="h-5 w-5 text-indigo-600" />
+            <Users className="h-5 w-5 text-indigo-600" />
             Danh sách giáo viên
           </CardTitle>
           <CardDescription>
@@ -240,47 +204,92 @@ export function TeachersTab({ campusId }: { campusId: string }) {
         </CardHeader>
         <CardContent>
           {!campusId ? (
-            <EmptyState message="Vui lòng chọn cơ sở ở thanh trên." />
+            <EmptyState
+              icon={<Building2 className="h-8 w-8 text-slate-300" />}
+              message="Vui lòng chọn cơ sở ở thanh trên."
+            />
           ) : isLoadingTeachers ? (
             <div className="space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
+                <Skeleton key={i} className="h-12 w-full" />
               ))}
             </div>
           ) : teachers.length === 0 ? (
-            <EmptyState message="Chưa có giáo viên nào trong cơ sở này." />
+            <EmptyState
+              icon={<UserCog className="h-8 w-8 text-slate-300" />}
+              message="Chưa có giáo viên nào trong cơ sở này. Bấm Tạo mới giáo viên ở trên."
+            />
           ) : (
             <div className="rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Họ tên</TableHead>
-                    <TableHead>Số điện thoại</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Khối dạy</TableHead>
+                    <TableHead className="w-16 text-center">#</TableHead>
+                    <TableHead>Giáo viên</TableHead>
+                    <TableHead className="w-36">Số điện thoại</TableHead>
+                    <TableHead>Lớp đang dạy</TableHead>
+                    <TableHead className="w-32">Trạng thái</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {teachers.map((t) => (
-                    <TableRow key={t.id}>
-                      <TableCell className="font-medium text-slate-800">{t.fullName}</TableCell>
-                      <TableCell className="font-mono text-xs">{t.phoneNumber}</TableCell>
-                      <TableCell className="text-slate-600">{t.email ?? '—'}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {t.teachingGradeLevels && t.teachingGradeLevels.length > 0 ? (
-                            t.teachingGradeLevels.map((gl) => (
-                              <Badge key={gl} variant="outline" className="font-normal">
-                                {GRADE_LEVEL_LABELS[gl as GradeLevel]}
-                              </Badge>
-                            ))
+                  {teachers.map((t, idx) => {
+                    const taughtList = t.taughtClasses ?? [];
+                    return (
+                      <TableRow key={t.id}>
+                        <TableCell className="text-center text-sm text-muted-foreground">
+                          {idx + 1}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-8 w-8">
+                              <AvatarFallback className="bg-amber-100 text-amber-700">
+                                {getInitials(t.fullName)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-800">
+                                {t.fullName}
+                              </p>
+                              {t.email && (
+                                <p className="truncate text-xs text-slate-500">{t.email}</p>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{t.phoneNumber}</TableCell>
+                        <TableCell>
+                          {taughtList.length === 0 ? (
+                            <span className="text-xs text-slate-400">Chưa phân công lớp</span>
                           ) : (
-                            <span className="text-xs text-slate-400">—</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {taughtList.map((c) => (
+                                <Badge
+                                  key={c.classId}
+                                  variant={c.isMainTeacher ? 'default' : 'secondary'}
+                                  className="gap-1"
+                                >
+                                  {c.isMainTeacher && <BadgeCheck className="h-3 w-3" />}
+                                  {c.className}
+                                  <span className="text-[10px] opacity-70">
+                                    · {GRADE_LEVEL_LABELS[c.gradeLevel as GradeLevel] ?? c.gradeLevel}
+                                  </span>
+                                </Badge>
+                              ))}
+                            </div>
                           )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell>
+                          {t.status === 'INACTIVE' ? (
+                            <Badge variant="destructive">Ngưng hoạt động</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-emerald-700">
+                              Hoạt động
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -288,152 +297,129 @@ export function TeachersTab({ campusId }: { campusId: string }) {
         </CardContent>
       </Card>
 
-      {/* =============== PHẦN 2: PHÂN CÔNG ĐỨNG LỚP =============== */}
+      {/* =============== PHẦN 2: PHÂN CÔNG GIÁO VIÊN ĐỨNG LỚP =============== */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-slate-800">
-            <UserCheck className="h-5 w-5 text-emerald-600" />
+            <GraduationCap className="h-5 w-5 text-emerald-600" />
             Phân công giáo viên đứng lớp
           </CardTitle>
           <CardDescription>
-            Chọn 1 lớp bên dưới, sau đó tích chọn từ <strong>1 đến 3</strong> giáo viên phụ trách
-            chung. Bấm <strong>Lưu phân công</strong> để ghi nhận.
+            Mỗi lớp được phân công <strong>1–3 giáo viên</strong> (1 chủ nhiệm + tối đa 2 trợ giảng).
+            Bấm <strong>Sửa phân công</strong> trên từng dòng để thay đổi.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent>
           {!campusId ? (
-            <EmptyState message="Vui lòng chọn cơ sở ở thanh trên." />
+            <EmptyState
+              icon={<Building2 className="h-8 w-8 text-slate-300" />}
+              message="Vui lòng chọn cơ sở ở thanh trên."
+            />
+          ) : isLoadingClasses ? (
+            <div className="space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 w-full" />
+              ))}
+            </div>
+          ) : classes.length === 0 ? (
+            <EmptyState
+              icon={<GraduationCap className="h-8 w-8 text-slate-300" />}
+              message="Cơ sở này chưa có lớp nào. Tạo lớp ở /dashboard/classes trước."
+            />
           ) : (
-            <>
-              {/* Bước 1: chọn lớp */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Lớp học cần phân công</label>
-                  <Select
-                    value={selectedClassId}
-                    onValueChange={setSelectedClassId}
-                    disabled={loadingClasses}
-                  >
-                    <SelectTrigger>
-                      <SelectValue
-                        placeholder={
-                          loadingClasses ? 'Đang tải lớp...' : 'Chọn lớp'
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {classes.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name} — {GRADE_LEVEL_LABELS[c.gradeLevel as GradeLevel]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Hiển thị thông tin tóm tắt lớp đang chọn */}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Tóm tắt</label>
-                  <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                    {currentClass ? (
-                      <>
-                        Đang phân công cho lớp <strong>{currentClass.name}</strong> (
-                        {GRADE_LEVEL_LABELS[currentClass.gradeLevel as GradeLevel]}) · Hiện có{' '}
-                        <strong>{currentClass.teacherIds?.length ?? 0}</strong> giáo viên
-                      </>
-                    ) : (
-                      <span className="text-slate-400">Chưa chọn lớp</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Bước 2: danh sách checkbox giáo viên */}
-              {selectedClassId && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Chọn giáo viên phụ trách</p>
-                    <Badge
-                      variant={selectedTeacherIds.size > 3 ? 'destructive' : 'secondary'}
-                      className="font-normal"
-                    >
-                      Đã chọn: {selectedTeacherIds.size} / 3
-                    </Badge>
-                  </div>
-
-                  {teachers.length === 0 ? (
-                    <EmptyState message="Cơ sở này chưa có giáo viên nào để phân công." />
-                  ) : (
-                    <div className="grid grid-cols-1 gap-2 rounded-md border border-slate-200 bg-white p-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {teachers.map((t) => {
-                        const checked = selectedTeacherIds.has(t.id);
-                        return (
-                          <label
-                            key={t.id}
-                            className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 px-3 py-2 transition-colors hover:bg-slate-50 has-[[data-state=checked]]:border-indigo-300 has-[[data-state=checked]]:bg-indigo-50"
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={() => toggleTeacher(t.id)}
-                              disabled={isSavingAssignment}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium text-slate-800">
-                                {t.fullName}
-                              </p>
-                              <p className="truncate text-xs text-slate-500">
-                                {t.phoneNumber}
-                                {t.teachingGradeLevels && t.teachingGradeLevels.length > 0 && (
-                                  <>
-                                    {' · '}
-                                    {t.teachingGradeLevels
-                                      .map((gl) => GRADE_LEVEL_LABELS[gl as GradeLevel])
-                                      .join(', ')}
-                                  </>
-                                )}
-                              </p>
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-16 text-center">#</TableHead>
+                    <TableHead>Lớp</TableHead>
+                    <TableHead>Giáo viên phụ trách</TableHead>
+                    <TableHead className="w-44 text-right">Thao tác</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {classes.map((c, idx) => {
+                    const taughtNames = (c.teacherNames ?? []).filter(Boolean);
+                    return (
+                      <TableRow key={c.id}>
+                        <TableCell className="text-center text-sm text-muted-foreground">
+                          {idx + 1}
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-0.5">
+                            <p className="font-semibold text-slate-800">{c.name}</p>
+                            <p className="text-xs text-slate-500">
+                              {GRADE_LEVEL_LABELS[c.gradeLevel as GradeLevel] ?? c.gradeLevel}
+                              {c.academicYear ? ` · ${c.academicYear}` : ''}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {taughtNames.length === 0 ? (
+                            <span className="text-xs italic text-amber-600">
+                              ⚠ Chưa có giáo viên phụ trách
+                            </span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {taughtNames.map((name, i) => {
+                                // teacherNames không kèm mainTeacher → hiển thị thường.
+                                // Nếu cần phân biệt, FE sẽ enrich bằng cách gọi classService.getTeachers
+                                // (đã dùng trong dialog). Ở đây hiển thị tên đơn giản cho gọn.
+                                return (
+                                  <Badge key={`${name}-${i}`} variant="secondary" className="font-normal">
+                                    {name}
+                                  </Badge>
+                                );
+                              })}
                             </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Bước 3: nút lưu */}
-              {selectedClassId && (
-                <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                  {isDirty && (
-                    <span className="text-xs text-amber-600">Có thay đổi chưa lưu</span>
-                  )}
-                  <Button
-                    onClick={handleSaveAssignment}
-                    disabled={isSavingAssignment || !isDirty}
-                  >
-                    {isSavingAssignment ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Đang lưu...
-                      </>
-                    ) : isDirty ? (
-                      <>
-                        <Save className="h-4 w-4" />
-                        Lưu phân công
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="h-4 w-4" />
-                        Đã lưu
-                      </>
-                    )}
-                  </Button>
-                </div>
-              )}
-            </>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleOpenEditAssignment(c)}
+                            disabled={isLoadingClassTeachers}
+                          >
+                            {isLoadingClassTeachers && editingClass?.id === c.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Pencil className="h-4 w-4" />
+                            )}
+                            Sửa phân công
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
+
+      {/* =============== DIALOGS =============== */}
+      <CreateTeacherDialog
+        open={isCreateOpen}
+        onOpenChange={setIsCreateOpen}
+        campusId={campusId}
+        onCreated={handleTeacherCreated}
+      />
+
+      {editingClass && (
+        <AssignTeachersDialog
+          open={!!editingClass}
+          onOpenChange={(o) => {
+            if (!o) handleCloseAssignment();
+          }}
+          classId={editingClass.id}
+          className={editingClass.name}
+          campusId={campusId}
+          currentTeachers={currentClassTeachers}
+          onSaved={handleAssignmentSaved}
+        />
+      )}
     </div>
   );
 }
@@ -441,10 +427,11 @@ export function TeachersTab({ campusId }: { campusId: string }) {
 // =====================================================================================
 // SUB-COMPONENT: EmptyState
 // =====================================================================================
-function EmptyState({ message }: { message: string }) {
+function EmptyState({ icon, message }: { icon: React.ReactNode; message: string }) {
   return (
-    <div className="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-sm text-slate-500">
-      {message}
+    <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-sm text-slate-500">
+      {icon}
+      <span>{message}</span>
     </div>
   );
 }

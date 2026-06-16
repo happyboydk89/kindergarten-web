@@ -26,7 +26,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
+  ChevronRight,
   Eye,
   Loader2,
   Pencil,
@@ -272,8 +274,21 @@ export function ClassesTab({ campusId }: { campusId: string }) {
                 </TableHeader>
                 <TableBody>
                   {classes.map((c) => (
-                    <TableRow key={c.id}>
-                      <TableCell className="font-medium text-slate-800">{c.name}</TableCell>
+                    <TableRow
+                      key={c.id}
+                      className="cursor-pointer hover:bg-indigo-50/40"
+                      onClick={() => router.push(`/dashboard/classes/${c.id}`)}
+                    >
+                      <TableCell className="font-medium text-slate-800">
+                        <Link
+                          href={`/dashboard/classes/${c.id}`}
+                          className="flex items-center gap-1 hover:text-indigo-700"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {c.name}
+                          <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         <Badge variant="secondary">
                           {GRADE_LEVEL_LABELS[c.gradeLevel as GradeLevel]}
@@ -286,7 +301,10 @@ export function ClassesTab({ campusId }: { campusId: string }) {
                           : '—'}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
+                        <div
+                          className="flex justify-end gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <Button
                             variant="ghost"
                             size="icon"

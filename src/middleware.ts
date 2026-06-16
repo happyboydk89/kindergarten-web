@@ -14,6 +14,17 @@ const ROLE_ROUTE_PATTERNS: Array<{
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // QUAN TRỌNG: Bỏ qua toàn bộ request tới /api/*.
+  // Lý do: API routes đã được proxy tới Backend (qua Next.js rewrite hoặc
+  // NEXT_PUBLIC_API_URL trực tiếp). Nếu middleware kiểm tra `accessToken`
+  // cookie trên các request này, sẽ redirect về /login (cookie httpOnly do
+  // BE set nằm trên domain BE, không có ở FE domain), làm vỡ mọi XHR từ
+  // `apiClient`. Auth-check thật sự đã được thực hiện bởi BE protect middleware.
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.next();
+  }
+
   const accessToken = request.cookies.get('accessToken')?.value;
   const userRole = request.cookies.get('user-role')?.value as UserRole | undefined;
 
@@ -60,5 +71,7 @@ function getRoleHomePath(role?: UserRole): string {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|images/).*)'],
+  // Bỏ qua static assets + API routes. API routes đã có BE protect middleware
+  // xử lý auth — không cần Next.js middleware check thêm.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|images/|api/).*)'],
 };
