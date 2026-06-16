@@ -71,6 +71,26 @@ export interface MarkAttendancePayload {
   }>;
 }
 
+/**
+ * Một record vắng mặt trong danh sách "DS vắng".
+ * Trả về từ GET /attendance/absent — đã join sẵn tên HS + lớp + lý do nghỉ.
+ */
+export interface AbsentListItem {
+  attendanceId: number;
+  /** YYYY-MM-DD theo giờ VN. */
+  date: string;
+  status: 'ABSENT_PLANNED' | 'ABSENT_UNPLANNED';
+  teacherNote: string | null;
+  student: {
+    id: number;
+    fullName: string;
+    classId: number | null;
+    className: string | null;
+    gradeLevel: string | null;
+    campusId: number | null;
+  };
+}
+
 export const attendanceService = {
   /**
    * Lấy điểm danh của 1 lớp theo 1 ngày.
@@ -114,6 +134,24 @@ export const attendanceService = {
     params: { fromDate: string; toDate: string; page?: number; limit?: number },
   ): Promise<ApiResponse<StudentAttendanceRangeResponse>> {
     return apiClient.get(`/attendance/student/${studentId}`, { params });
+  },
+
+  /**
+   * Danh sách điểm danh vắng (ABSENT_PLANNED + ABSENT_UNPLANNED) phân trang.
+   * GET /api/v1/attendance/absent?campusId=&status=&fromDate=&toDate=&page=&limit=
+   * - PRINCIPAL: thấy mọi HS vắng trong campus (filter `campusId`).
+   * - TEACHER: chỉ thấy HS vắng thuộc lớp mình phụ trách.
+   * - Sort: date DESC (ngày vắng gần nhất lên đầu), studentId ASC.
+   */
+  async getAbsentList(params: {
+    campusId?: string;
+    status?: 'ABSENT_PLANNED' | 'ABSENT_UNPLANNED';
+    fromDate?: string;
+    toDate?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<ApiResponse<AbsentListItem[]>> {
+    return apiClient.get('/attendance/absent', { params });
   },
 
   /**

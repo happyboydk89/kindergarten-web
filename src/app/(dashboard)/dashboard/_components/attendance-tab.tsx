@@ -33,10 +33,15 @@ import {
   UserX,
   Clock,
   Search,
+  ChevronLeft,
+  ChevronRight,
+  CalendarOff,
+  FileText,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -58,10 +63,11 @@ import { useAuth } from '@/hooks/use-auth';
 import {
   attendanceService,
   type StudentAttendanceRecord,
+  type AbsentListItem,
 } from '@/services/attendance.service';
 import { classService, type ClassInfo } from '@/services/class.service';
-import type { AttendanceStatus } from '@/types';
-import { ATTENDANCE_STATUS_LABELS } from '@/types';
+import type { AttendanceStatus, GradeLevel } from '@/types';
+import { ATTENDANCE_STATUS_LABELS, GRADE_LEVEL_LABELS } from '@/types';
 
 function getVietnamToday(): string {
   const now = new Date();
@@ -215,6 +221,46 @@ export function AttendanceTab({ campusId }: { campusId: string }) {
   };
 
   const selectedClassName = classes.find((c) => c.id === selectedClassId)?.name;
+
+  // ============== DANH SÁCH VẮNG (phân trang 20/page, sort date DESC) ==============
+  const [absentItems, setAbsentItems] = useState<AbsentListItem[]>([]);
+  const [absentMeta, setAbsentMeta] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
+  const [absentPage, setAbsentPage] = useState(1);
+  const [isLoadingAbsent, setIsLoadingAbsent] = useState(false);
+
+  // Reset về trang 1 khi đổi campus
+  useEffect(() => {
+    setAbsentPage(1);
+  }, [campusId]);
+
+  const fetchAbsent = useCallback(async () => {
+    if (!campusId) {
+      setAbsentItems([]);
+      setAbsentMeta({ page: 1, limit: 20, total: 0, totalPages: 1 });
+      return;
+    }
+    setIsLoadingAbsent(true);
+    try {
+      const res = await attendanceService.getAbsentList({
+        campusId,
+        page: absentPage,
+        limit: 20,
+      });
+      if (res?.success) {
+        const items = Array.isArray(res.data) ? res.data : [];
+        setAbsentItems(items);
+        if (res.meta) setAbsentMeta(res.meta);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách vắng');
+    } finally {
+      setIsLoadingAbsent(false);
+    }
+  }, [campusId, absentPage]);
+
+  useEffect(() => {
+    void fetchAbsent();
+  }, [fetchAbsent]);
 
   return (
     <div className="space-y-6">
@@ -408,6 +454,159 @@ export function AttendanceTab({ campusId }: { campusId: string }) {
           </CardContent>
         </Card>
       )}
+
+      {/* =============== DANH SÁCH VẮNG MẶT (20/page, date DESC) =============== */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-slate-800">
+                <CalendarOff className="h-5 w-5 text-red-600" />
+                Danh sách vắng mặt
+              </CardTitle>
+              <CardDescription>
+                {campusId
+                  ? `Tổng cộng ${absentMeta.total} lượt vắng tại cơ sở đang chọn — sắp xếp theo ngày gần nhất.`
+                  : 'Vui lòng chọn cơ sở để xem danh sách vắng mặt.'}
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!campusId ? (
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-sm text-slate-500">
+              <CalendarOff className="h-8 w-8 text-slate-300" />
+              <span>Vui lòng chọn cơ sở ở thanh trên.</span>
+            </div>
+          ) : isLoadingAbsent ? (
+            <div className="space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : absentItems.length === 0 ? (
+            <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-emerald-200 bg-emerald-50/40 px-4 py-8 text-center text-sm text-emerald-700">
+              <UserCheck className="h-8 w-8 text-emerald-300" />
+              <span>Không có học sinh vắng mặt nào trong cơ sở này.</span>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-14 text-center">#</TableHead>
+                      <TableHead className="w-32">Ngày vắng</TableHead>
+                      <TableHead>Học sinh</TableHead>
+                      <TableHead className="w-44">Lớp</TableHead>
+                      <TableHead className="w-36">Loại vắng</TableHead>
+                      <TableHead>Lý do</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {absentItems.map((item, idx) => (
+                      <TableRow key={item.attendanceId}>
+                        <TableCell className="text-center text-sm text-muted-foreground">
+                          {(absentMeta.page - 1) * absentMeta.limit + idx + 1}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{item.date}</TableCell>
+                        <TableCell className="font-medium text-slate-800">
+                          {item.student.fullName}
+                        </TableCell>
+                        <TableCell>
+                          {item.student.className ? (
+                            <span className="text-sm text-slate-700">
+                              {item.student.className}
+                              {item.student.gradeLevel && (
+                                <span className="ml-1 text-xs text-slate-500">
+                                  (
+                                  {GRADE_LEVEL_LABELS[item.student.gradeLevel as GradeLevel] ??
+                                    item.student.gradeLevel}
+                                  )
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {item.status === 'ABSENT_PLANNED' ? (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-50 text-amber-700"
+                            >
+                              <Clock className="mr-1 h-3 w-3" />
+                              Nghỉ có phép
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className="border-red-300 bg-red-50 text-red-700"
+                            >
+                              <UserX className="mr-1 h-3 w-3" />
+                              Nghỉ không phép
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {item.teacherNote ? (
+                            <div className="flex items-start gap-1.5 text-sm text-slate-700">
+                              <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                              <span className="line-clamp-2">{item.teacherNote}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs italic text-slate-400">
+                              Không có ghi chú
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination 20/page */}
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-slate-500">
+                  Hiển thị{' '}
+                  <strong>
+                    {absentMeta.total === 0
+                      ? 0
+                      : (absentMeta.page - 1) * absentMeta.limit + 1}
+                  </strong>
+                  –<strong>{Math.min(absentMeta.page * absentMeta.limit, absentMeta.total)}</strong>{' '}
+                  trong tổng số <strong>{absentMeta.total}</strong> lượt vắng
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={absentMeta.page <= 1}
+                    onClick={() => setAbsentPage(absentMeta.page - 1)}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Trước
+                  </Button>
+                  <span className="text-sm text-slate-600">
+                    Trang {absentMeta.page} / {Math.max(1, absentMeta.totalPages)}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={absentMeta.page >= absentMeta.totalPages}
+                    onClick={() => setAbsentPage(absentMeta.page + 1)}
+                  >
+                    Sau
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
