@@ -106,8 +106,6 @@ import {
   DISH_MEAL_TYPE_ORDER,
 } from '@/services/dish.service';
 import { scheduleService } from '@/services/schedule.service';
-import type { GradeLevel } from '@/types';
-import { GRADE_LEVELS, GRADE_LEVEL_LABELS } from '@/types';
 import {
   WEEKDAY_LABELS_VN,
   addDays,
@@ -131,7 +129,7 @@ type MenuDraft = Record<string, { breakfastDishId: number | null; lunchDishId: n
 
 function WeekMenuEditor({ campusId }: { campusId: string }) {
   // ============== STATE ==============
-  const [gradeLevel, setGradeLevel] = useState<GradeLevel | ''>('');
+  // Menu thống nhất theo campus — không còn chọn khối (gradeLevel).
   const [weekStart, setWeekStart] = useState<string>(startOfWeek(getVietnamToday()));
   const [dishes, setDishes] = useState<Dish[]>([]);
   const [menu, setMenu] = useState<MenuDraft>({});
@@ -141,6 +139,8 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   // ============== EFFECT: load dishes theo campus ==============
+  // Chạy ngay khi campusId có (kể cả sau khi component remount) — đảm bảo
+  // khi user navigate sang tab khác rồi quay lại, danh sách món vẫn tự động load.
   useEffect(() => {
     if (!campusId) {
       setDishes([]);
@@ -167,9 +167,11 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
     };
   }, [campusId]);
 
-  // ============== EFFECT: load schedule tuần ==============
+  // ============== EFFECT: load schedule tuần (theo campus) ==============
+  // Trigger khi [campusId, weekStart] đổi. Re-fetch ngay khi mount (initial state của
+  // weekStart đã là tuần hiện tại, nên component remount sẽ tự re-fetch đúng tuần cũ).
   useEffect(() => {
-    if (!campusId || !gradeLevel) {
+    if (!campusId) {
       setMenu({});
       return;
     }
@@ -177,9 +179,8 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
     (async () => {
       setIsLoadingSchedule(true);
       try {
-        const res = await scheduleService.getWeekly({
+        const res = await scheduleService.getWeeklyByCampus({
           campusId,
-          gradeLevel: gradeLevel as GradeLevel,
           weekStart,
         });
         if (cancelled) return;
@@ -208,7 +209,7 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [campusId, gradeLevel, weekStart]);
+  }, [campusId, weekStart]);
 
   // ============== COMPUTED: 7 ngày trong tuần ==============
   const weekDays = useMemo(
@@ -246,8 +247,8 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
 
   // ============== CALLBACK: lưu thực đơn cả tuần ==============
   const handleSaveMenu = useCallback(async () => {
-    if (!campusId || !gradeLevel) {
-      toast.error('Vui lòng chọn cơ sở và khối lớp trước khi lưu');
+    if (!campusId) {
+      toast.error('Vui lòng chọn cơ sở trước khi lưu');
       return;
     }
     setIsSaving(true);
@@ -268,7 +269,6 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
 
       const res = await scheduleService.setMenuForWeek({
         campusId: Number(campusId),
-        gradeLevel: gradeLevel as GradeLevel,
         days: daysPayload,
       });
       if (res?.success && res.data) {
@@ -282,7 +282,7 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
     } finally {
       setIsSaving(false);
     }
-  }, [campusId, gradeLevel, weekDays, menu]);
+  }, [campusId, weekDays, menu]);
 
   return (
     <div className="space-y-4">
@@ -297,31 +297,12 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
               <CardDescription>
                 Calendar table 7 ngày (T2–CN) × 3 bữa (Sáng/Trưa/Xế). Mỗi ô là dropdown chọn món
                 từ danh mục. Bấm <strong>Lưu thực đơn</strong> để ghi nhận cả tuần.
+                Thực đơn <strong>thống nhất</strong> cho cả cơ sở (không phân biệt khối lớp).
               </CardDescription>
             </div>
 
             {/* Controls */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-              <div className="w-full space-y-1.5 sm:w-48">
-                <label className="text-sm font-medium">Khối lớp</label>
-                <Select
-                  value={gradeLevel}
-                  onValueChange={(v) => setGradeLevel(v as GradeLevel)}
-                  disabled={!campusId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Chọn khối" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GRADE_LEVELS.map((g) => (
-                      <SelectItem key={g.value} value={g.value}>
-                        {g.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
               <div className="flex flex-1 items-end gap-2">
                 <Button
                   variant="outline"
@@ -356,7 +337,7 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
 
               <Button
                 onClick={handleSaveMenu}
-                disabled={isSaving || !campusId || !gradeLevel || isLoadingDishes}
+                disabled={isSaving || !campusId || isLoadingDishes}
                 className="shrink-0"
               >
                 {isSaving ? (
@@ -376,8 +357,8 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
         </CardHeader>
 
         <CardContent>
-          {!campusId || !gradeLevel ? (
-            <EmptyState message="Vui lòng chọn cơ sở và khối lớp ở thanh trên." />
+          {!campusId ? (
+            <EmptyState message="Vui lòng chọn cơ sở ở thanh trên." />
           ) : isLoadingSchedule || isLoadingDishes ? (
             <div className="space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (

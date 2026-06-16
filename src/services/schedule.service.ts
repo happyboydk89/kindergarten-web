@@ -1,31 +1,33 @@
 import apiClient from '@/lib/api-client';
-import type { ApiResponse, GradeLevel } from '@/types';
+import type { ApiResponse } from '@/types';
 
 /**
- * Lịch thực đơn theo ngày (DailySchedule).
- *
- * Lưu ý về schema: BE hiện tại lưu `breakfast`/`lunch`/`snack`/`activities`
- * dưới dạng chuỗi tự do (xem `schedule.service.ts` trong BE). Khi có bảng
- * `Dish` riêng, service này sẽ được mở rộng để include `dishIds: string[]`.
+ * Lịch thực đơn theo ngày (DailySchedule) — MENU THỐNG NHẤT theo campus.
+ * BE lưu `breakfast`/`lunch`/`snack` (chuỗi legacy) + FK dishId (mới).
+ * FE ưu tiên hiển thị `breakfastDish.name` khi có.
  */
 export interface DailySchedule {
   date: string; // YYYY-MM-DD (VN)
-  /** Món ăn sáng (chuỗi tự do, vd "Cháo gà"). */
+  /** Món ăn sáng (chuỗi tự do, fallback khi không có FK). */
   breakfast: string | null;
   /** Món ăn trưa. */
   lunch: string | null;
-  /** Món ăn xế chiều. */
+  /** Món xế chiều. */
   snack: string | null;
-  /** Lịch sinh hoạt trong ngày (Markdown / JSON). */
+  breakfastDishId: number | null;
+  lunchDishId: number | null;
+  snackDishId: number | null;
+  breakfastDish: DishSummary | null;
+  lunchDish: DishSummary | null;
+  snackDish: DishSummary | null;
   activities: string | null;
-  gradeLevel: GradeLevel;
-  campusId: string;
-  id?: string;
+  campusId: number;
+  id?: number;
   createdAt?: string;
   updatedAt?: string;
 }
 
-/** Một dòng tóm tắt Dish được nhúng vào response (id + name + mealType + calories). */
+/** Tóm tắt Dish được nhúng vào response (id + name + mealType + calories). */
 export interface DishSummary {
   id: number;
   name: string;
@@ -33,32 +35,18 @@ export interface DishSummary {
   calories: number | null;
 }
 
-/** Response khi GET /schedules/weekly-by-grade. */
-export interface WeeklyScheduleByGradeResponse {
+/** Response khi GET /schedules/weekly-by-campus — endpoint chính cho trang /dashboard/menu. */
+export interface WeeklyScheduleByCampusResponse {
   campus: { id: number; name: string };
-  gradeLevel: GradeLevel;
   startDate: string;
   endDate: string;
   totalFound: number;
-  days: Array<{
-    date: string;
-    breakfast: string | null;
-    lunch: string | null;
-    snack: string | null;
-    /** FK đến Dish catalog — ưu tiên hiển thị `breakfastDish.name` khi có. */
-    breakfastDishId: number | null;
-    lunchDishId: number | null;
-    snackDishId: number | null;
-    breakfastDish: DishSummary | null;
-    lunchDish: DishSummary | null;
-    snackDish: DishSummary | null;
-    activities: string | null;
-  }>;
+  days: DailySchedule[];
 }
 
 /** Response khi GET /schedules/weekly (classId-based, giữ tương thích cũ). */
 export interface WeeklyScheduleResponse {
-  class: { id: number; name: string; gradeLevel: GradeLevel; campusId: number; academicYear: string };
+  class: { id: number; name: string; gradeLevel: string; campusId: number; academicYear: string };
   startDate: string;
   endDate: string;
   totalFound: number;
@@ -68,38 +56,19 @@ export interface WeeklyScheduleResponse {
     lunch: string | null;
     snack: string | null;
     activities: string | null;
-  }>;
-}
-
-/**
- * Payload cho POST /schedules/bulk.
- * Theo CONTEXT: upsert theo (campusId, gradeLevel, date), nên gửi nguyên tuần.
- */
-export interface BulkSchedulesPayload {
-  campusId: string;
-  gradeLevel: GradeLevel;
-  weekStart: string; // YYYY-MM-DD (T2 của tuần)
-  schedules: Array<{
-    date: string; // YYYY-MM-DD
-    breakfast?: string | null;
-    lunch?: string | null;
-    snack?: string | null;
-    activities?: string | null;
   }>;
 }
 
 export const scheduleService = {
   /**
-   * Lấy lịch thực đơn cả tuần (T2..CN) theo (campusId, gradeLevel).
-   * GET /api/v1/schedules/weekly-by-grade?campusId=&gradeLevel=&weekStart=YYYY-MM-DD
-   * — Endpoint này phục vụ Campus Switcher ở Dashboard.
+   * Lấy thực đơn cả tuần (T2..CN) theo campus — MENU THỐNG NHẤT (1 campus / 1 ngày).
+   * GET /api/v1/schedules/weekly-by-campus?campusId=&weekStart=YYYY-MM-DD
    */
-  async getWeekly(params: {
+  async getWeeklyByCampus(params: {
     campusId: string;
-    gradeLevel: GradeLevel;
     weekStart: string;
-  }): Promise<ApiResponse<WeeklyScheduleByGradeResponse>> {
-    return apiClient.get('/schedules/weekly-by-grade', { params });
+  }): Promise<ApiResponse<WeeklyScheduleByCampusResponse>> {
+    return apiClient.get('/schedules/weekly-by-campus', { params });
   },
 
   /**
@@ -114,17 +83,10 @@ export const scheduleService = {
   },
 
   /**
-   * Upsert hàng loạt lịch tuần.
-   * POST /api/v1/schedules/bulk
-   */
-  async bulkUpsert(payload: BulkSchedulesPayload): Promise<ApiResponse<{ totalSaved: number; schedules: DailySchedule[] }>> {
-    return apiClient.post('/schedules/bulk', payload);
-  },
-
-  /**
-   * Set thực đơn cả tuần qua Dish catalog — dùng cho calendar table ở FE.
+   * Set thực đơn cả tuần qua Dish catalog — calendar table ở FE.
    * POST /api/v1/schedules/menu-week
-   * Body: { campusId, gradeLevel, days: [{ date, breakfastDishId?, lunchDishId?, snackDishId? }] }
+   * Body: { campusId, days: [{ date, breakfastDishId?, lunchDishId?, snackDishId? }] }
+   * (không còn gradeLevel — menu unified).
    */
   async setMenuForWeek(
     payload: SetMenuForWeekPayload,
@@ -135,7 +97,6 @@ export const scheduleService = {
 
 export interface SetMenuForWeekPayload {
   campusId: number;
-  gradeLevel: GradeLevel;
   days: Array<{
     date: string;
     breakfastDishId?: number | null;
@@ -146,7 +107,6 @@ export interface SetMenuForWeekPayload {
 
 export interface SetMenuForWeekResponse {
   campusId: number;
-  gradeLevel: GradeLevel;
   saved: Array<{
     date: string;
     breakfastDishId: number | null;
