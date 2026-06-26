@@ -36,6 +36,7 @@ import {
   Save,
   Wallet,
 } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -203,7 +204,7 @@ export function MealFeeTab({ campusId }: { campusId: string }) {
         }
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải dữ liệu đối lưu');
+          toast.error(extractApiError(err, 'Không thể tải dữ liệu đối lưu'));
         }
       } finally {
         if (!cancelled) setIsLoadingRows(false);
@@ -483,7 +484,7 @@ function MealFeeConfigForm({
         toast.error(res?.message ?? 'Lưu cấu hình thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra');
+      toast.error(extractApiError(err, 'Có lỗi xảy ra'));
     } finally {
       setIsSubmitting(false);
     }

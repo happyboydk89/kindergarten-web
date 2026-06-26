@@ -114,6 +114,7 @@ import {
   getVietnamToday,
   startOfWeek,
 } from '@/lib/date-utils';
+import { extractApiError } from '@/lib/api-helpers';
 
 // =====================================================================================
 // SUB-TAB 1: Thực đơn tuần
@@ -125,12 +126,57 @@ const WEEK_DAY_ISOS = [1, 2, 3, 4, 5, 6, 7] as const; // T2..CN
  * Map YYYY-MM-DD → { breakfastDishId, lunchDishId, snackDishId }.
  * Tất cả các field đều optional (null = không gán món).
  */
-type MenuDraft = Record<string, { breakfastDishId: number | null; lunchDishId: number | null; snackDishId: number | null }>;
+type MenuDraft = Record<
+  string,
+  {
+    breakfastDishId: number | null;
+    /** Tên món sáng (lưu kèm từ BE response để hiển thị ngay cả khi `dishes` array chưa load xong). */
+    breakfastDishName: string | null;
+    lunchDishId: number | null;
+    lunchDishName: string | null;
+    snackDishId: number | null;
+    snackDishName: string | null;
+  }
+>;
+
+/**
+ * Key lưu `weekStart` vào localStorage để giữ qua F5 / navigate.
+ * Khi user chọn "Tuần trước" rồi save menu ở tuần đó, refresh sẽ KHÔNG bị reset
+ * về tuần hiện tại (giúp không "mất" menu đã lưu).
+ */
+const MENU_WEEK_START_STORAGE_KEY = 'kindergarten.menuWeekStart';
+
+function loadStoredWeekStart(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(MENU_WEEK_START_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveWeekStart(weekStart: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(MENU_WEEK_START_STORAGE_KEY, weekStart);
+  } catch {
+    /* silent */
+  }
+}
 
 function WeekMenuEditor({ campusId }: { campusId: string }) {
   // ============== STATE ==============
   // Menu thống nhất theo campus — không còn chọn khối (gradeLevel).
-  const [weekStart, setWeekStart] = useState<string>(startOfWeek(getVietnamToday()));
+  //
+  // `weekStart` khởi tạo từ localStorage (nếu có) — giữ qua F5/navigate.
+  // Fallback về tuần hiện tại nếu localStorage trống.
+  const [weekStart, setWeekStartState] = useState<string>(
+    () => loadStoredWeekStart() ?? startOfWeek(getVietnamToday()),
+  );
+  const setWeekStart = useCallback((iso: string) => {
+    setWeekStartState(iso);
+    saveWeekStart(iso);
+  }, []);
   const [dishes, setDishes] = useState<Dish[]>([]);
   const [menu, setMenu] = useState<MenuDraft>({});
   const [isLoadingDishes, setIsLoadingDishes] = useState(false);
@@ -156,7 +202,7 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
         }
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách món');
+          toast.error(extractApiError(err, 'Không thể tải danh sách món'));
         }
       } finally {
         if (!cancelled) setIsLoadingDishes(false);
@@ -191,8 +237,13 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
             if (!d.date) continue;
             next[d.date] = {
               breakfastDishId: d.breakfastDishId ?? null,
+              // Lưu tên món ngay từ BE response (nested breakfastDish/lunchDish/snackDish)
+              // → hiển thị được ngay cả khi `dishes` array (catalog) chưa load xong.
+              breakfastDishName: d.breakfastDish?.name ?? null,
               lunchDishId: d.lunchDishId ?? null,
+              lunchDishName: d.lunchDish?.name ?? null,
               snackDishId: d.snackDishId ?? null,
+              snackDishName: d.snackDish?.name ?? null,
             };
           }
         }
@@ -200,7 +251,7 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
         setHasUnsavedChanges(false);
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải thực đơn tuần');
+          toast.error(extractApiError(err, 'Không thể tải thực đơn tuần'));
         }
       } finally {
         if (!cancelled) setIsLoadingSchedule(false);
@@ -271,14 +322,33 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
         campusId: Number(campusId),
         days: daysPayload,
       });
-      if (res?.success && res.data) {
-        toast.success(`Đã lưu thực đơn cho ${res.data.saved.length} ngày.`);
+      const savedDays = res?.data?.saved;
+      if (res?.success && savedDays) {
+        toast.success(`Đã lưu thực đơn cho ${savedDays.length} ngày.`);
         setHasUnsavedChanges(false);
+        // Đồng bộ `menu` state với data BE vừa lưu — đảm bảo UI phản ánh đúng
+        // (kể cả khi BE normalize data như set null, trim, v.v.). Tránh stale state.
+        setMenu((prev) => {
+          const next = { ...prev };
+          for (const saved of savedDays) {
+            // Đồng bộ cả id + name từ BE response để hiển thị tức thì, không phụ thuộc
+            // vào `dishes` catalog (load song song có thể chậm hơn).
+            next[saved.date] = {
+              breakfastDishId: saved.breakfastDishId,
+              breakfastDishName: saved.breakfastDish?.name ?? null,
+              lunchDishId: saved.lunchDishId,
+              lunchDishName: saved.lunchDish?.name ?? null,
+              snackDishId: saved.snackDishId,
+              snackDishName: saved.snackDish?.name ?? null,
+            };
+          }
+          return next;
+        });
       } else {
         toast.error(res?.message ?? 'Lưu thực đơn thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra khi lưu thực đơn');
+      toast.error(extractApiError(err, 'Có lỗi xảy ra khi lưu thực đơn'));
     } finally {
       setIsSaving(false);
     }
@@ -408,13 +478,24 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
                         </div>
                       </TableCell>
                       {weekDays.map((date) => {
-                        const current = menu[date]?.[`${mealType}DishId` as 'breakfastDishId' | 'lunchDishId' | 'snackDishId'] ?? null;
+                        const entry = menu[date];
+                        const current = entry?.[`${mealType}DishId` as 'breakfastDishId' | 'lunchDishId' | 'snackDishId'] ?? null;
+                        const name =
+                          entry?.[`${mealType}DishName` as 'breakfastDishName' | 'lunchDishName' | 'snackDishName'] ?? null;
+                        // Tên hiển thị: ưu tiên tên lưu trong state (set ngay khi load schedule
+                        // từ BE response), fallback tên từ `dishes` catalog.
+                        const displayName =
+                          name ??
+                          (current != null
+                            ? dishes.find((d) => d.id === current)?.name ?? null
+                            : null);
                         const options = dishesByMealType[mealType];
                         return (
                           <TableCell key={`${date}-${mealType}`} className="p-2 align-top">
                             <DishPicker
                               value={current}
                               options={options}
+                              currentName={displayName}
                               onChange={(id) => setMenuItem(date, mealType, id)}
                               disabled={isSaving}
                             />
@@ -439,14 +520,28 @@ function WeekMenuEditor({ campusId }: { campusId: string }) {
 function DishPicker({
   value,
   options,
+  currentName,
   onChange,
   disabled,
 }: {
   value: number | null;
   options: Dish[];
+  /**
+   * Tên món đang chọn — lấy từ `menu[date].breakfastDishName` (state, set ngay khi
+   * load schedule từ BE). Dùng để hiển thị ngay cả khi `dishes` array (catalog)
+   * chưa load xong — khắc phục race condition giữa 2 useEffect load song song.
+   */
+  currentName: string | null;
   onChange: (id: number | null) => void;
   disabled: boolean;
 }) {
+  // Khi `value` được set nhưng `dishes` chưa load xong (race condition giữa 2 useEffect
+  // load schedule + load dishes song song), `options` rỗng → shadcn Select không tìm
+  // thấy option tương ứng với `value` → hiển thị `(trống)`. Fix bằng cách thêm 1
+  // "option ảo" với tên từ `currentName` (state) để Select luôn render đúng tên.
+  const selectedFromOptions = options.find((d) => d.id === value);
+  const showGhostOption = value !== null && !selectedFromOptions;
+
   return (
     <Select
       value={value === null ? '__none__' : String(value)}
@@ -460,6 +555,11 @@ function DishPicker({
         <SelectItem value="__none__" className="text-slate-400 italic">
           — (trống) —
         </SelectItem>
+        {showGhostOption && (
+          <SelectItem key={`ghost-${value}`} value={String(value)}>
+            {currentName ?? `Món #${value}`}
+          </SelectItem>
+        )}
         {options.map((d) => (
           <SelectItem key={d.id} value={String(d.id)}>
             {d.name}
@@ -527,7 +627,7 @@ function DishesAdmin({ campusId }: { campusId: string }) {
         setDishes(res.data);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách món');
+      toast.error(extractApiError(err, 'Không thể tải danh sách món'));
     } finally {
       setIsLoading(false);
     }
@@ -554,7 +654,7 @@ function DishesAdmin({ campusId }: { campusId: string }) {
         toast.error(res?.message ?? 'Xoá thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Xoá thất bại');
+      toast.error(extractApiError(err, 'Xoá thất bại'));
     } finally {
       setIsDeleting(false);
       setDeletingId(null);
@@ -838,7 +938,7 @@ function DishFormDialog({
         }
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra');
+      toast.error(extractApiError(err, 'Có lỗi xảy ra'));
     } finally {
       setIsSubmitting(false);
     }

@@ -43,6 +43,7 @@ import {
   Trash2,
   Wallet,
 } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -229,7 +230,7 @@ function ExpenseLogSection({
         }
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải nhật ký chi tiêu');
+          toast.error(extractApiError(err, 'Không thể tải nhật ký chi tiêu'));
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -271,7 +272,7 @@ function ExpenseLogSection({
         toast.error(res?.message ?? 'Xóa thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Xóa thất bại');
+      toast.error(extractApiError(err, 'Xóa thất bại'));
     } finally {
       setIsDeleting(false);
       setDeletingId(null);
@@ -450,7 +451,7 @@ function NewExpenseDialog({
         toast.error(res?.message ?? 'Ghi nhận thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra');
+      toast.error(extractApiError(err, 'Có lỗi xảy ra'));
     } finally {
       setIsSubmitting(false);
     }
@@ -637,7 +638,7 @@ function BlacklistSection({
         }
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách nợ học phí');
+          toast.error(extractApiError(err, 'Không thể tải danh sách nợ học phí'));
         }
       } finally {
         if (!cancelled) setIsLoading(false);

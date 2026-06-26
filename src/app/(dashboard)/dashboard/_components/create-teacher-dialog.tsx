@@ -24,6 +24,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { Copy, KeyRound, Loader2, UserCog } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -139,7 +140,7 @@ export function CreateTeacherDialog({
         toast.error(res.message ?? 'Tạo giáo viên thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Tạo giáo viên thất bại');
+      toast.error(extractApiError(err, 'Tạo giáo viên thất bại'));
     } finally {
       setIsSubmitting(false);
     }

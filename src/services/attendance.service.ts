@@ -162,4 +162,42 @@ export const attendanceService = {
   async markAttendance(payload: MarkAttendancePayload): Promise<ApiResponse<null>> {
     return apiClient.post('/attendance', payload);
   },
+
+  /**
+   * Matrix điểm danh của 1 lớp trong 1 tháng — hiển thị dạng lưới 30 ngày × N học sinh.
+   * GET /api/v1/attendance/class/:classId/monthly?month=YYYY-MM
+   * Mỗi cell = status (PRESENT | ABSENT_PLANNED | ABSENT_UNPLANNED | null) + teacherNote.
+   * - PRINCIPAL: xem mọi lớp.
+   * - TEACHER: chỉ lớp mình dạy (BE check `ClassTeacher`).
+   */
+  async getMonthlyMatrix(params: {
+    classId: string;
+    month: string; // YYYY-MM
+  }): Promise<
+    ApiResponse<{
+      class: { id: number; name: string; gradeLevel: string; academicYear: string };
+      month: string;
+      days: Array<{
+        date: string; // YYYY-MM-DD
+        weekday: number; // 1..7 (T2..CN)
+        students: Array<{
+          studentId: number;
+          fullName: string;
+          status: 'PRESENT' | 'ABSENT_PLANNED' | 'ABSENT_UNPLANNED' | null;
+          teacherNote: string | null;
+        }>;
+      }>;
+      summary: {
+        totalDays: number;
+        totalStudents: number;
+        presentCount: number;
+        plannedAbsentCount: number;
+        unplannedAbsentCount: number;
+      };
+    }>
+  > {
+    return apiClient.get(`/attendance/class/${params.classId}/monthly`, {
+      params: { month: params.month },
+    });
+  },
 };

@@ -36,6 +36,7 @@ import {
   School,
   Trash2,
 } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -157,7 +158,7 @@ export function ClassesTab({ campusId }: { campusId: string }) {
         }
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách lớp');
+          toast.error(extractApiError(err, 'Không thể tải danh sách lớp'));
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -194,7 +195,7 @@ export function ClassesTab({ campusId }: { campusId: string }) {
         toast.error(res?.message ?? 'Xóa lớp thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Xóa lớp thất bại');
+      toast.error(extractApiError(err, 'Xóa lớp thất bại'));
     } finally {
       setIsDeleting(false);
       setDeletingId(null);
@@ -213,7 +214,7 @@ export function ClassesTab({ campusId }: { campusId: string }) {
         setPreviewDay(res.data[0] ?? null);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Không thể tải điểm danh');
+      toast.error(extractApiError(err, 'Không thể tải điểm danh'));
     } finally {
       setPreviewLoading(false);
     }
@@ -521,7 +522,7 @@ function ClassFormDialog({
         toast.error(res?.message ?? 'Lưu lớp thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Có lỗi xảy ra');
+      toast.error(extractApiError(err, 'Có lỗi xảy ra'));
     } finally {
       setIsSubmitting(false);
     }

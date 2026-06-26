@@ -35,6 +35,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -128,7 +129,7 @@ export function ClassDetailTab({
       if (res.success && res.data) setDetail(res.data);
       else toast.error(res.message ?? 'Không thể tải thông tin lớp');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Lỗi tải lớp');
+      toast.error(extractApiError(err, 'Lỗi tải lớp'));
     } finally {
       setIsLoadingDetail(false);
     }
@@ -236,7 +237,7 @@ export function ClassDetailTab({
         toast.error(res.message ?? 'Xóa thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Xóa thất bại');
+      toast.error(extractApiError(err, 'Xóa thất bại'));
     } finally {
       setIsRemoving(false);
     }

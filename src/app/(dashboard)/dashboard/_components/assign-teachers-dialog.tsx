@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Loader2, UserCog } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -133,7 +134,7 @@ export function AssignTeachersDialog({
         toast.error(res.message ?? 'Phân công thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Phân công thất bại');
+      toast.error(extractApiError(err, 'Phân công thất bại'));
     } finally {
       setIsSubmitting(false);
     }

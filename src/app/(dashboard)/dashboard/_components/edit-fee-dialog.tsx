@@ -21,6 +21,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { Loader2, Wallet } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -99,7 +100,7 @@ export function EditFeeDialog({
         toast.error(res.message ?? 'Cập nhật học phí thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Cập nhật học phí thất bại');
+      toast.error(extractApiError(err, 'Cập nhật học phí thất bại'));
     } finally {
       setIsSubmitting(false);
     }
@@ -117,7 +118,7 @@ export function EditFeeDialog({
         toast.error(res.message ?? 'Reset thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Reset thất bại');
+      toast.error(extractApiError(err, 'Reset thất bại'));
     } finally {
       setIsSubmitting(false);
     }

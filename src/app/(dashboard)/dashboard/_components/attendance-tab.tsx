@@ -37,6 +37,10 @@ import {
   ChevronRight,
   CalendarOff,
   FileText,
+  CheckCircle2,
+  XCircle,
+  Minus,
+  Calendar,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -68,6 +72,7 @@ import {
 import { classService, type ClassInfo } from '@/services/class.service';
 import type { AttendanceStatus, GradeLevel } from '@/types';
 import { ATTENDANCE_STATUS_LABELS, GRADE_LEVEL_LABELS } from '@/types';
+import { extractApiError } from '@/lib/api-helpers';
 
 function getVietnamToday(): string {
   const now = new Date();
@@ -252,7 +257,7 @@ export function AttendanceTab({ campusId }: { campusId: string }) {
         if (res.meta) setAbsentMeta(res.meta);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách vắng');
+      toast.error(extractApiError(err, 'Không thể tải danh sách vắng'));
     } finally {
       setIsLoadingAbsent(false);
     }
@@ -607,6 +612,427 @@ export function AttendanceTab({ campusId }: { campusId: string }) {
           )}
         </CardContent>
       </Card>
+
+      {/* =============== BẢNG ĐIỂM DANH THEO THÁNG (matrix 30 ngày × N HS) =============== */}
+      <MonthlyAttendanceMatrix
+        campusId={campusId}
+        teacherClassId={user?.classId ?? undefined}
+      />
+    </div>
+  );
+}
+
+// =====================================================================================
+// SUB-COMPONENT: MonthlyAttendanceMatrix
+// =====================================================================================
+
+/**
+ * Bảng tổng quan điểm danh của 1 lớp trong 1 tháng.
+ * - Cột: ngày 1 → 30 (header là ngày + thứ T2..CN).
+ * - Hàng: danh sách học sinh trong lớp.
+ * - Mỗi cell: icon O (xanh) nếu PRESENT, X (đỏ) nếu vắng PLANNED, X (cam) nếu UNPLANNED,
+ *   dấu "—" nếu chưa điểm danh.
+ * - Hover vào cell sẽ show tooltip ghi chú của GV.
+ * - Mục đích: cho Hiệu trưởng / Giáo viên nhìn 1 tháng, biết ngay HS nào vắng nhiều,
+ *   ngày nào nghỉ nhiều.
+ */
+const WEEKDAY_SHORT_VN = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'] as const;
+
+function MonthlyAttendanceMatrix({
+  campusId,
+  teacherClassId,
+}: {
+  campusId: string;
+  /** Nếu là TEACHER, auto chọn lớp của giáo viên này. */
+  teacherClassId?: string;
+}) {
+  const today = new Date();
+  const [selectedMonth, setSelectedMonth] = useState<string>(
+    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`,
+  );
+  const [selectedClassId, setSelectedClassId] = useState<string>(teacherClassId ?? '');
+  const [classes, setClasses] = useState<ClassInfo[]>([]);
+  const [isLoadingClasses, setIsLoadingClasses] = useState(false);
+  const [isLoadingMatrix, setIsLoadingMatrix] = useState(false);
+  const [matrix, setMatrix] = useState<
+    | {
+        class: { id: number; name: string; gradeLevel: string; academicYear: string };
+        month: string;
+        days: Array<{
+          date: string;
+          weekday: number;
+          students: Array<{
+            studentId: number;
+            fullName: string;
+            status: 'PRESENT' | 'ABSENT_PLANNED' | 'ABSENT_UNPLANNED' | null;
+            teacherNote: string | null;
+          }>;
+        }>;
+        summary: {
+          totalDays: number;
+          totalStudents: number;
+          presentCount: number;
+          plannedAbsentCount: number;
+          unplannedAbsentCount: number;
+        };
+      }
+    | null
+  >(null);
+
+  // Load classes theo campus
+  useEffect(() => {
+    if (!campusId) {
+      setClasses([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setIsLoadingClasses(true);
+      try {
+        const res = await classService.list({ campusId, limit: 100 });
+        if (cancelled) return;
+        if (res?.success && Array.isArray(res.data)) {
+          setClasses(res.data);
+          // Auto-select: teacher chọn lớp của mình; nếu không thì lớp đầu tiên
+          if (teacherClassId && res.data.some((c) => c.id === teacherClassId)) {
+            setSelectedClassId(teacherClassId);
+          } else if (res.data.length > 0 && !selectedClassId) {
+            setSelectedClassId(res.data[0].id);
+          }
+        }
+      } catch {
+        if (!cancelled) toast.error('Không thể tải danh sách lớp');
+      } finally {
+        if (!cancelled) setIsLoadingClasses(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [campusId, teacherClassId]);
+
+  // Load matrix khi đổi (classId, month)
+  useEffect(() => {
+    if (!selectedClassId || !selectedMonth) {
+      setMatrix(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setIsLoadingMatrix(true);
+      try {
+        const res = await attendanceService.getMonthlyMatrix({
+          classId: selectedClassId,
+          month: selectedMonth,
+        });
+        if (cancelled) return;
+        if (res?.success && res.data) {
+          setMatrix(res.data);
+        } else {
+          setMatrix(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          toast.error(extractApiError(err, 'Không thể tải bảng điểm danh'));
+        }
+      } finally {
+        if (!cancelled) setIsLoadingMatrix(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClassId, selectedMonth]);
+
+  // Shifts month +/- 1 (YYYY-MM)
+  const shiftMonth = (delta: number) => {
+    const [yStr, mStr] = selectedMonth.split('-');
+    const y = Number(yStr);
+    const m = Number(mStr) - 1 + delta;
+    const ny = Math.floor(m / 12) + y;
+    const nm = ((m % 12) + 12) % 12;
+    setSelectedMonth(`${ny}-${String(nm + 1).padStart(2, '0')}`);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-slate-800">
+              <Calendar className="h-5 w-5 text-indigo-600" />
+              Bảng điểm danh theo tháng
+            </CardTitle>
+            <CardDescription>
+              Lưới 30 ngày × N học sinh — nhìn tổng quan ai vắng ngày nào. Click vào cell để xem
+              ghi chú của giáo viên.
+            </CardDescription>
+          </div>
+
+          {/* Controls: chọn lớp + tháng */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <div className="w-full space-y-1.5 sm:w-56">
+              <label className="text-sm font-medium">Lớp học</label>
+              {!campusId ? (
+                <p className="text-sm text-muted-foreground">Vui lòng chọn cơ sở trước</p>
+              ) : isLoadingClasses ? (
+                <Skeleton className="h-9 w-full" />
+              ) : (
+                <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Chọn lớp" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {classes.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name} {c.academicYear ? `(${c.academicYear})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div className="flex items-end gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => shiftMonth(-1)}
+                title="Tháng trước"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Tháng</label>
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700">
+                  {selectedMonth}
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => shiftMonth(1)}
+                title="Tháng sau"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent>
+        {!campusId ? (
+          <EmptyState message="Vui lòng chọn cơ sở ở thanh trên." />
+        ) : isLoadingMatrix ? (
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : !matrix ? (
+          <EmptyState message="Chọn lớp và tháng để xem bảng điểm danh." />
+        ) : (
+          <MatrixTable matrix={matrix} />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Render bảng matrix 30 cột × N hàng.
+ * - Sticky first column (tên HS) để scroll ngang vẫn thấy tên.
+ * - Sticky header (ngày + thứ) để scroll dọc vẫn thấy cột.
+ * - Cell: icon O (xanh) | X (đỏ) | X (cam) | "—" (chưa điểm danh).
+ */
+function MatrixTable({
+  matrix,
+}: {
+  matrix: NonNullable<
+    | {
+        class: { id: number; name: string; gradeLevel: string; academicYear: string };
+        month: string;
+        days: Array<{
+          date: string;
+          weekday: number;
+          students: Array<{
+            studentId: number;
+            fullName: string;
+            status: 'PRESENT' | 'ABSENT_PLANNED' | 'ABSENT_UNPLANNED' | null;
+            teacherNote: string | null;
+          }>;
+        }>;
+        summary: {
+          totalDays: number;
+          totalStudents: number;
+          presentCount: number;
+          plannedAbsentCount: number;
+          unplannedAbsentCount: number;
+        };
+      }
+    | null
+  >;
+}) {
+  // students danh sách unique từ day[0]
+  const students = matrix.days[0]?.students ?? [];
+  const summary = matrix.summary;
+
+  return (
+    <>
+      {/* Summary chips */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <Badge variant="secondary" className="font-mono">
+          {summary.totalStudents} HS × {summary.totalDays} ngày
+        </Badge>
+        <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">
+          <CheckCircle2 className="mr-1 h-3 w-3" /> {summary.presentCount} buổi có mặt
+        </Badge>
+        <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+          <XCircle className="mr-1 h-3 w-3" /> {summary.plannedAbsentCount} nghỉ có phép
+        </Badge>
+        <Badge variant="outline" className="border-red-300 bg-red-50 text-red-700">
+          <XCircle className="mr-1 h-3 w-3" /> {summary.unplannedAbsentCount} nghỉ không phép
+        </Badge>
+      </div>
+
+      <div className="overflow-auto rounded-md border" style={{ maxHeight: '70vh' }}>
+        <table className="border-collapse text-xs">
+          <thead className="sticky top-0 z-10 bg-slate-50">
+            <tr>
+              <th
+                className="sticky left-0 z-20 min-w-[180px] border-b border-r border-slate-200 bg-slate-50 px-3 py-2 text-left font-semibold text-slate-700"
+              >
+                Học sinh
+              </th>
+              {matrix.days.map((d) => {
+                const wd = WEEKDAY_SHORT_VN[d.weekday % 7];
+                const day = Number(d.date.slice(-2));
+                const isWeekend = d.weekday === 7 || d.weekday === 6;
+                return (
+                  <th
+                    key={d.date}
+                    className={`min-w-[36px] border-b border-r border-slate-200 px-1 py-1 text-center align-bottom ${
+                      isWeekend ? 'bg-amber-50/60' : ''
+                    }`}
+                    title={d.date}
+                  >
+                    <div className="text-[10px] font-normal text-slate-500">{wd}</div>
+                    <div className="text-sm font-semibold text-slate-800">{day}</div>
+                  </th>
+                );
+              })}
+              <th className="min-w-[80px] border-b border-slate-200 bg-slate-50 px-2 py-2 text-center text-[10px] font-semibold text-slate-700">
+                Tổng
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {students.map((student, sIdx) => {
+              // Tính absent count cho student này
+              let absP = 0;
+              let absU = 0;
+              let present = 0;
+              let unmarked = 0;
+              for (const d of matrix.days) {
+                const s = d.students[sIdx];
+                if (s?.status === 'PRESENT') present += 1;
+                else if (s?.status === 'ABSENT_PLANNED') absP += 1;
+                else if (s?.status === 'ABSENT_UNPLANNED') absU += 1;
+                else unmarked += 1;
+              }
+              return (
+                <tr key={student.studentId} className="hover:bg-slate-50/50">
+                  <td className="sticky left-0 z-10 min-w-[180px] border-b border-r border-slate-200 bg-white px-3 py-1.5 text-left">
+                    <span className="font-medium text-slate-800">{student.fullName}</span>
+                  </td>
+                  {matrix.days.map((d) => {
+                    const s = d.students[sIdx];
+                    const status = s?.status ?? null;
+                    const note = s?.teacherNote ?? null;
+                    const isWeekend = d.weekday === 7 || d.weekday === 6;
+                    return (
+                      <td
+                        key={d.date}
+                        className={`min-w-[36px] border-b border-r border-slate-100 px-1 py-1 text-center ${
+                          isWeekend ? 'bg-amber-50/30' : ''
+                        }`}
+                        title={
+                          status
+                            ? `${d.date}: ${status === 'PRESENT' ? 'Có mặt' : status === 'ABSENT_PLANNED' ? 'Nghỉ có phép' : 'Nghỉ không phép'}${note ? `\n📝 ${note}` : ''}`
+                            : `${d.date}: Chưa điểm danh`
+                        }
+                      >
+                        {status === 'PRESENT' && (
+                          <CheckCircle2 className="mx-auto h-4 w-4 text-emerald-600" />
+                        )}
+                        {status === 'ABSENT_PLANNED' && (
+                          <XCircle className="mx-auto h-4 w-4 text-amber-500" />
+                        )}
+                        {status === 'ABSENT_UNPLANNED' && (
+                          <XCircle className="mx-auto h-4 w-4 text-red-600" />
+                        )}
+                        {status === null && (
+                          <Minus className="mx-auto h-3.5 w-3.5 text-slate-300" />
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="min-w-[80px] border-b border-slate-100 bg-slate-50/50 px-2 py-1.5 text-center">
+                    <div className="flex items-center justify-center gap-1 text-[10px]">
+                      <span className="font-mono text-emerald-600">{present}</span>
+                      <span className="text-slate-300">/</span>
+                      <span className="font-mono text-amber-500">{absP}</span>
+                      <span className="text-slate-300">/</span>
+                      <span className="font-mono text-red-600">{absU}</span>
+                      {unmarked > 0 && (
+                        <span className="text-slate-400">+{unmarked}</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {students.length === 0 && (
+              <tr>
+                <td colSpan={matrix.days.length + 2} className="p-8 text-center text-sm text-slate-500">
+                  Lớp này chưa có học sinh nào.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Legend */}
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+        <span className="flex items-center gap-1">
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> Có mặt
+        </span>
+        <span className="flex items-center gap-1">
+          <XCircle className="h-3.5 w-3.5 text-amber-500" /> Nghỉ có phép
+        </span>
+        <span className="flex items-center gap-1">
+          <XCircle className="h-3.5 w-3.5 text-red-600" /> Nghỉ không phép
+        </span>
+        <span className="flex items-center gap-1">
+          <Minus className="h-3.5 w-3.5 text-slate-300" /> Chưa điểm danh
+        </span>
+        <span className="ml-auto text-slate-400">
+          Hover vào ô để xem ghi chú của giáo viên.
+        </span>
+      </div>
+    </>
+  );
+}
+
+// =====================================================================================
+// SUB-COMPONENT: EmptyState
+// =====================================================================================
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-[120px] items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-sm text-slate-500">
+      {message}
     </div>
   );
 }

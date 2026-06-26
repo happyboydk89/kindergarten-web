@@ -33,6 +33,7 @@ import {
   Loader2,
   UserPlus,
 } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -141,7 +142,7 @@ export function StudentsTab({ campusId }: { campusId: string }) {
         }
       } catch (err) {
         if (!cancelled) {
-          toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách học sinh');
+          toast.error(extractApiError(err, 'Không thể tải danh sách học sinh'));
         }
       } finally {
         if (!cancelled) setIsLoading(false);
@@ -437,7 +438,7 @@ function CreateStudentDialog({
         : null;
       const message =
         firstFieldError ??
-        (err instanceof Error ? err.message : 'Có lỗi xảy ra khi tiếp nhận học sinh');
+        (extractApiError(err, 'Có lỗi xảy ra khi tiếp nhận học sinh'));
       toast.error(message);
     } finally {
       setIsSubmitting(false);

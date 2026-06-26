@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Loader2, Search, UserPlus, X } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -131,7 +132,7 @@ export function AddStudentsDialog({
         toast.error(res.message ?? 'Thêm học sinh thất bại');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Thêm học sinh thất bại');
+      toast.error(extractApiError(err, 'Thêm học sinh thất bại'));
     } finally {
       setIsSubmitting(false);
     }

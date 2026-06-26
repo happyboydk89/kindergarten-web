@@ -28,6 +28,7 @@ import {
   UserCog,
   Users,
 } from 'lucide-react';
+import { extractApiError } from '@/lib/api-helpers';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -92,7 +93,7 @@ export function TeachersTab({ campusId }: { campusId: string }) {
         }
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Không thể tải danh sách giáo viên');
+      toast.error(extractApiError(err, 'Không thể tải danh sách giáo viên'));
     } finally {
       setIsLoadingTeachers(false);
     }
